@@ -1,0 +1,2 @@
+lab1/data/*.fa filter=lfs diff=lfs merge=lfs -text
+lab1/data/*.rda filter=lfs diff=lfs merge=lfs -text
