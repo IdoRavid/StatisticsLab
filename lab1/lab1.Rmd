@@ -14,28 +14,39 @@ Group:
 
 Group members (Name, ID, email)
 
--   Ido Ravid, 207198177, [ido.ravid\@mail.huji.ac.il](mailto:ido.ravid@mail.huji.ac.il){.email}
+-   Ido Ravid, 207198177, ido.ravid\@mail.huji.ac.il
 
 -   Omer Sutovsky, 318735107 ,omer.sutovsky\@mail.huji.ac.il
 
 -   Shir Tsarfaty, 207718008, shir.tsarfaty\@mail.huji.ac.il
-
-### Libraries used
-
-```{r libraries}
-
-#library("")
-```
 
 ### Paths and Data
 
 Please use this block to write the paths for all the files you are loading.
 If you have a function file, please add it to the submission and call it using a relative path.
 
-```{r paths}
-dir_name = "/Users/idoravid/Documents/Studies/Stat Lab/Lab 1/data"
-str1_file = sprintf("%s/%s", dir_name, "chr1_str.rda")
+```{r paths & global vars}
+str1_file = "data/chr1_str.rda"
+beg_region = 50000000
+end_region = 70000000 - 1
 
+BASES = c("A","C","G","T")
+
+CELL_SIZE=1000
+```
+
+#### Run Once - Creating an RDA file from FA file
+
+```{r .rda file creation}
+dir_name = "data"
+fa_file = sprintf("%s/%s", dir_name, "chr1.fa")
+
+# read as as string
+lines = readLines(fa_file)
+chr1 = paste(lines[!grepl("^>", lines)], collapse = "")
+
+#save to RDA
+save(chr1, file = sprintf("%s/%s", dir_name, "chr1_str.rda"))
 ```
 
 ## Introduction
@@ -48,8 +59,6 @@ We aim to see the distribution of the bases and perhaps gain some insight about 
 Reading the Chromosome Data
 
 ```{r part1, fig.width=5, fig.height=5}
-beg_region = 50000000
-end_region = 70000000 - 1
 
 load(str1_file)  
 chr1_reg_str = substr(chr1, beg_region, end_region)
@@ -71,16 +80,15 @@ Defining the Function:
 ```{r base count function}
 base_count = function(chr_vec, cell_size)
 {
-  bases = c("A","C","G","T") # bases vector
   cell_count = floor(length(chr_vec) / cell_size) # calc cell count
-  counts = matrix(0, nrow = cell_count, ncol = length(bases)) # init counts matrix
-  colnames(counts) = bases # set base values as col names
-  
-  cell_idx = ceiling(1:length(chr_vec) / cell_size)  # create index to cell mapping
-  
-  for (b in bases) {
-    # as per the LLM's recommendation, using tabulate over a vector to quickly count the bases
-    counts[, b] = tabulate(cell_idx[chr_vec == b], nbins = cell_count)
+  counts = matrix(0, nrow = cell_count, ncol = length(BASES)) # init counts matrix
+  colnames(counts) = BASES # set base values as col names
+  for (i in 1:cell_count) {
+    start_bin = 1 + (i-1)*cell_size
+    end_bin = i*cell_size
+    for (b in BASES) {
+      counts[i, b] = sum(chr_vec[start_bin:end_bin] == b)
+    }
   }
   return(counts)
 }
@@ -89,7 +97,6 @@ base_count = function(chr_vec, cell_size)
 And using it:
 
 ```{r counting for cell_size=1000}
-CELL_SIZE=1000
 base_counts = base_count(chr_str, CELL_SIZE)
 ```
 
@@ -97,8 +104,7 @@ base_counts = base_count(chr_str, CELL_SIZE)
 
 ```{r, create histogram}
 par(mfrow = c(2, 2))
-bases = c("A","C","G","T") # bases vector
-for (b in bases) {
+for (b in BASES) {
   hist(base_counts[, b], breaks = 30, main = paste("Base", b), xlab = "Count per cell")
 }
 ```
@@ -110,7 +116,7 @@ par(mfrow = c(2, 2))
 n_bins = nrow(base_counts)
 bin_size = CELL_SIZE
 
-for (b in c("A","C","G","T")) {
+for (b in BASES) {
   plot((2000:n_bins)*bin_size, base_counts[2000:n_bins, b]/bin_size, 
        pch=20, cex=0.5, xlab="Location", ylab="Proportion", main=paste("Base", b))
   abline(h=0.25)
@@ -171,7 +177,7 @@ plot(1:nrow(base_counts), (base_counts[,"C"] + base_counts[,"G"])/CELL_SIZE,
      main="High GC Regions", ylim=c(0.3, 0.7))
 abline(h=0.5, lty=2, col="gray")
 abline(v=c(3000, 5500), lty=1, lwd=3, col="darkred")
-legend("topright", legend="Region 3000-5500", col="darkred", lty=1, lwd=2)
+legend("bottomright", legend="Region 3000-5500", col="darkred", lty=1, lwd=2)
 
 points(high_GC_cells, (base_counts[high_GC_cells,"C"] + base_counts[high_GC_cells,"G"])/CELL_SIZE, 
        col="blue", pch=20, cex=0.8)
@@ -205,12 +211,8 @@ we looked both at their frequency, their correlation and suggested abnormal regi
 
 We used AI (Claude) in several places:
 
-1\.
-to fix an off-by-one bug in the `base_count` function
-
-2\.
-to speed things up in `base_count` - instead of using a double loop, it recommended using `tabulate` to calculate the counts faster.
-
+1.  To correctly use `grepl` to save the RDA file.
+2.  to fix an off-by-one bug in the `base_count` function
 3.  to find the function `which` used to filter the bases frequency in part 5
 
-We also used some R documentation for several functions, namely: [tabulate](https://www.rdocumentation.org/packages/base/versions/3.6.2/topics/tabulate), [legend](https://www.rdocumentation.org/packages/graphics/versions/3.6.2/topics/legend), [which](https://www.rdocumentation.org/packages/base/versions/3.6.2/topics/which)
+We also used some R documentation for several functions, namely: [legend](https://www.rdocumentation.org/packages/graphics/versions/3.6.2/topics/legend), [which](https://www.rdocumentation.org/packages/base/versions/3.6.2/topics/which)
