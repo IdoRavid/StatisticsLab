@@ -30,7 +30,8 @@ str1_file = "data/chr1_str.rda"
 beg_region = 50000000
 end_region = 70000000 - 1
 
-BASES = c("A","C","G","T")
+BASES = c("A","C","G","T","a","c","g","t","N")
+CONF_BASES = c("A","C","G","T")
 
 CELL_SIZE=1000
 ```
@@ -65,11 +66,12 @@ chr1_reg_str = substr(chr1, beg_region, end_region)
 chr_str = strsplit(chr1_reg_str, "")[[1]]
 ```
 
-some preprocessing:
+some preprocessing:\
+(Omer's note: there is meaning to upper vs lower case letters, we can't remove it) ((in yuval's rmd he mentioned do to convert to capital, Q%A forum is not open yet in order to ask 0_0 )
 
 ```{r preprocess}
-chr_str = toupper(chr_str) # to upper case
-chr_str = chr_str[chr_str != "N"] # removing N
+# chr_str = toupper(chr_str) # to upper case
+# chr_str = chr_str[chr_str != "N"] # removing N
 
 ```
 
@@ -104,7 +106,7 @@ base_counts = base_count(chr_str, CELL_SIZE)
 
 ```{r, create histogram}
 par(mfrow = c(2, 2))
-for (b in BASES) {
+for (b in CONF_BASES) {
   hist(base_counts[, b], breaks = 30, main = paste("Base", b), xlab = "Count per cell")
 }
 ```
@@ -116,9 +118,10 @@ par(mfrow = c(2, 2))
 n_bins = nrow(base_counts)
 bin_size = CELL_SIZE
 
-for (b in BASES) {
-  plot((2000:n_bins)*bin_size, base_counts[2000:n_bins, b]/bin_size, 
-       pch=20, cex=0.5, xlab="Location", ylab="Proportion", main=paste("Base", b))
+for (b in CONF_BASES) {
+  x_vals <- ((2000:n_bins) * bin_size) / 1e6 # convert to millions
+  plot(x_vals, base_counts[2000:n_bins, b] / bin_size,
+       pch=20, cex=0.5, xlab="Base Index (millions)", ylab="Proportion", main=paste("Base", b))
   abline(h=0.25)
 }
 ```
@@ -140,21 +143,102 @@ legend("topright", legend=c("A","T","C","G"),
        col=c("lightblue","lightcoral","darkblue","darkred"), lty=1)
 ```
 
+(Omer's note: here are my suggestion on how to display it, added a running median line with a window of 201 bins = 100k bases to each side. then layed the trends on top of each other and the comparison is easier i think)
+
+```{r, plotting hists with running median}
+par(mfrow = c(2, 2))
+options(scipen = 999)
+
+n_bins = nrow(base_counts)
+bin_size = CELL_SIZE
+
+k <- 201 # window size
+
+for (b in CONF_BASES) {
+  x_vals <- ((2000:n_bins) * bin_size) / 1e6
+  y_vals <- base_counts[2000:n_bins, b] / bin_size
+  
+  plot(x_vals, y_vals,
+       pch = 20,
+       cex = 0.4,
+       col = "black",
+       xlab = "Base Index (millions)",
+       ylab = "Proportion",
+       main = paste("Base", b))
+  
+  # reference line
+  abline(h = 0.25, lty = 2)
+  
+  # running median
+  y_runmed <- runmed(y_vals, k = k)
+  
+  # thick red trend line
+  lines(x_vals, y_runmed, col = "red", lwd = 3)
+}
+```
+
+```{r, comparing runmed of the bases}
+# store results
+runmed_list <- list()
+
+for (b in CONF_BASES) {
+  x_vals <- ((2000:n_bins) * bin_size) / 1e6
+  y_vals <- base_counts[2000:n_bins, b] / bin_size
+  runmed_list[[b]] <- runmed(y_vals, k = k)
+}
+
+# colors for combined plot
+base_colors <- c(A = "red", C = "blue", G = "darkgreen", T = "purple")
+
+par(mar = c(8, 8,8,8), xpd = TRUE)
+plot(x_vals, runmed_list[[CONF_BASES[1]]],
+     type = "n",
+     xlab = "Base Index (millions)",
+     ylab = "Running Median Proportion",
+     main = "Running Median Comparison Across Bases",
+     ylim = range(unlist(runmed_list), na.rm = TRUE))
+
+# add lines
+for (b in CONF_BASES) {
+  lines(x_vals, runmed_list[[b]],
+        col = base_colors[b],
+        lwd = 2)
+}
+
+# legend
+legend("topright",
+       inset = c(-0.3, -0.4),
+       xpd = TRUE,
+       cex = 0.8,
+       x.intersp = 0.1,
+       y.intersp = 0.1,
+       seg.len = 0.5,
+       legend = paste("Base", CONF_BASES),
+       col = base_colors[CONF_BASES],
+       lwd = 2,
+       bty = "n")
+```
+
 We can clearly see the A-T G-C pairs here based on similar frequencies.
-we can also see a region in the beginning (around 5.0e\^6) with higher G-C pairs.
+It is more easily noticed with the running median trend lines.
 
 ## Part 5
 
 ```{r, pair scatter plots, fig.width=12, fig.height=10}
 par(mfrow = c(2, 4)) # create grid
+layout(matrix(c(
+  3, 2, 1, 0,
+  4, 5, 6, 0
+), nrow = 2, byrow = TRUE))
 bases = c("A","C","G","T")
 
 for (i in 1:3) {
   for (j in (i+1):4) { # increasing innner loop so we dont do the same pair again
+    par(pin = c(3, 3))
     if (i != j) {
       plot(base_counts[,i], base_counts[,j], 
            xlab=bases[i], ylab=bases[j], 
-           main=paste(bases[i], "vs", bases[j]), pch=20, cex=0.3)
+           main=paste(bases[i], "vs", bases[j]), pch=20, cex=0.3, asp = 1)
     }
   }
 }
@@ -162,7 +246,8 @@ for (i in 1:3) {
 ```
 
 1.  We can see negative correlations in the non-paired bases: A-C, A-G, C-T, G-T - all have a (somewhat) negative slope, meaning that one is less prevelant when the other one is more.
-
+(Omer's note: I dont see the negative slope you are refreing to.) 
+1.*  We can see all of the pairs have somewhat of a positive correlation. But it is clear that the strongest pairs are A-T and C-G.
 2.  We can see that the C-G pair is concentrated in the bottom left corner, with genereally less pairs then the others.
     however, it has outliers in the top right, where both bases have higher frequency.
     looking back to the We can also see that the A-T pair is generally centered higher, indicating a higher shared frequency for it.
@@ -177,7 +262,7 @@ plot(1:nrow(base_counts), (base_counts[,"C"] + base_counts[,"G"])/CELL_SIZE,
      main="High GC Regions", ylim=c(0.3, 0.7))
 abline(h=0.5, lty=2, col="gray")
 abline(v=c(3000, 5500), lty=1, lwd=3, col="darkred")
-legend("bottomright", legend="Region 3000-5500", col="darkred", lty=1, lwd=2)
+legend("bottomright", legend="Region 3000-5500", col="darkred", lty=1, lwd=2, cex = 0.8)
 
 points(high_GC_cells, (base_counts[high_GC_cells,"C"] + base_counts[high_GC_cells,"G"])/CELL_SIZE, 
        col="blue", pch=20, cex=0.8)
@@ -185,6 +270,7 @@ points(high_GC_cells, (base_counts[high_GC_cells,"C"] + base_counts[high_GC_cell
 
 ```
 
+(Omer's note: sohuldnt the regoin be between 50-70 mil? i am a bit confused on this part lol)
 We can see the high G-C pairs clustered around cells indexed 3000-5500.
 The interesting part is the high density of these pairs, which seems abnormal compared to their distribution elsewhere along the chromosome.
 
@@ -194,7 +280,7 @@ As we mentioned several times, we can see a natural pairing of A-T and C-G.
 We can see this pairing in several parts:
 
 1\.
-similarity of the base frequency histogram
+similarity of the base frequency histogram and running medians
 
 2\.
 frequency graph along the chromosome
@@ -212,7 +298,7 @@ we looked both at their frequency, their correlation and suggested abnormal regi
 We used AI (Claude) in several places:
 
 1.  To correctly use `grepl` to save the RDA file.
-2.  to fix an off-by-one bug in the `base_count` function
-3.  to find the function `which` used to filter the bases frequency in part 5
+2.  To fix an off-by-one bug in the `base_count` function
+3.  To find the function `which` used to filter the bases frequency in part 5
 
 We also used some R documentation for several functions, namely: [legend](https://www.rdocumentation.org/packages/graphics/versions/3.6.2/topics/legend), [which](https://www.rdocumentation.org/packages/base/versions/3.6.2/topics/which)
