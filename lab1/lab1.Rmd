@@ -1,16 +1,20 @@
 ---
 title: "HW1"
-author: "Group Name"
-date: "30/03/26"
+author: "Group 12 - Shir, Omer & Ido"
+date: "11/04/26"
 output:
+  pdf_document:
+    extra_dependencies: ["fvextra"]
   html_document:
     code_folding: show
-editor_options: 
-  markdown: 
+header-includes:
+  - \DefineVerbatimEnvironment{Highlighting}{Verbatim}{breaklines,commandchars=\\\{\}}
+editor_options:
+  markdown:
     wrap: sentence
 ---
 
-Group:
+### Group:
 
 Group members (Name, ID, email)
 
@@ -36,7 +40,7 @@ CONF_BASES = c("A","C","G","T")
 CELL_SIZE=1000
 ```
 
-#### Run Once - Creating an RDA file from FA file
+### Run Once - Creating an RDA file from FA file
 
 ```{r .rda file creation}
 dir_name = "data"
@@ -66,9 +70,7 @@ chr1_reg_str = substr(chr1, beg_region, end_region)
 chr_str = strsplit(chr1_reg_str, "")[[1]]
 ```
 
-some preprocessing:\
-(Omer's note: there is meaning to upper vs lower case letters, we can't remove it) ((in yuval's rmd he mentioned do to convert to capital, Q%A forum is not open yet in order to ask 0_0 )\
-( Ido: I thought since he did this as well, removing lowercase is expected. Keeping it makes the analysis more complex and i don't think that's what he intends. I kept it for now so to keep the graphs from looking ugly. Let's wait for his answer) )
+some preprocessing:
 
 ```{r preprocess}
 chr_str = toupper(chr_str) # to upper case
@@ -99,7 +101,7 @@ base_count = function(chr_vec, cell_size)
 
 And using it:
 
-```{r counting for cell_size=1000}
+```{r counting_cell_size_1000}
 base_counts = base_count(chr_str, CELL_SIZE)
 ```
 
@@ -108,7 +110,7 @@ base_counts = base_count(chr_str, CELL_SIZE)
 ```{r, create histogram}
 par(mfrow = c(2, 2))
 for (b in CONF_BASES) {
-  hist(base_counts[, b], breaks = 30, main = paste("Base", b), xlab = "Count per cell")
+  hist(base_counts[, b], breaks = 30, main = paste("Base", b), xlab = "Count per cell (1000 base pairs)", ylab = "Number of cells")
 }
 ```
 
@@ -140,13 +142,11 @@ lines((200:n_bins_smooth)*CELL_SIZE_SMOOTH, base_counts_smooth[200:n_bins_smooth
 lines((200:n_bins_smooth)*CELL_SIZE_SMOOTH, base_counts_smooth[200:n_bins_smooth, "C"]/CELL_SIZE_SMOOTH, col="darkblue")
 lines((200:n_bins_smooth)*CELL_SIZE_SMOOTH, base_counts_smooth[200:n_bins_smooth, "G"]/CELL_SIZE_SMOOTH, col="darkred")
 abline(h=0.25, lty=2)
-legend("topright", legend=c("A","T","C","G"), 
-       col=c("lightblue","lightcoral","darkblue","darkred"), lty=1)
+legend("bottomright", legend=c("A","T","C","G"), 
+       col=c("lightblue","lightcoral","darkblue","darkred"), lty=1, bg="white")
 ```
 
-(Omer's note: here are my suggestion on how to display it, added a running median line with a window of 201 bins = 100k bases to each side. then layed the trends on top of each other and the comparison is easier i think)
-
-```{r, plotting hists with running median}
+```{r, plotting hists with running median, fig.width=12, fig.height=8}
 par(mfrow = c(2, 2))
 options(scipen = 999)
 
@@ -175,6 +175,8 @@ for (b in CONF_BASES) {
   
   # thick red trend line
   lines(x_vals, y_runmed, col = "red", lwd = 3)
+  
+  legend("bottomright", legend = "Running median", col = "red", lwd = 3, bg = "white")
 }
 ```
 
@@ -216,26 +218,23 @@ legend("topright",
        bty = "n")
 ```
 
-We can clearly see the A-T G-C pairs here based on similar frequencies.
+We can clearly see the A-T & G-C pairs here based on similar frequencies.
 It is more easily noticed with the running median trend lines.
 
 ## Part 5
 
-```{r, pair scatter plots, fig.width=12, fig.height=10}
-par(mfrow = c(2, 4)) # create grid
-layout(matrix(c(
-  3, 2, 1, 0,
-  4, 5, 6, 0
-), nrow = 2, byrow = TRUE))
+```{r, pair scatter plots, fig.width=14, fig.height=10}
+par(mfrow = c(2, 3))
 bases = c("A","C","G","T")
 
 for (i in 1:3) {
   for (j in (i+1):4) { # increasing innner loop so we dont do the same pair again
-    par(pin = c(3, 3))
     if (i != j) {
       plot(base_counts[,i], base_counts[,j], 
            xlab=bases[i], ylab=bases[j], 
            main=paste(bases[i], "vs", bases[j]), pch=20, cex=0.3, asp = 1)
+      clip(min(base_counts[,i]), max(base_counts[,i]), min(base_counts[,j]), max(base_counts[,j])) # clip drawing region to data range so abline doesn't extend outside the plot
+      abline(lm(base_counts[,j] ~ base_counts[,i]), col="red", lwd=2)
     }
   }
 }
@@ -251,7 +250,7 @@ high_GC_cells = which(base_counts[,"C"] + base_counts[,"G"] > 550)
 high_GC_pos = high_GC_cells * CELL_SIZE + beg_region
 
 plot(1:nrow(base_counts), (base_counts[,"C"] + base_counts[,"G"])/CELL_SIZE, 
-     type="l", xlab="Cell Index", ylab="GC Proportion",
+     type="l", xlab="Cell Index (1 cell = 1000 base pairs)", ylab="GC Proportion",
      main="High GC Regions", ylim=c(0.3, 0.7))
 abline(h=0.5, lty=2, col="gray")
 
@@ -259,14 +258,11 @@ abline(h=0.5, lty=2, col="gray")
 rect(3000, 0.3, 5500, 0.7, col=rgb(1, 0, 0, 0.1), border=NA)
 
 abline(v=c(3000, 5500), lty=1, lwd=2, col="darkred")
-legend("bottomright", legend="Region 3000-5500 (53 M-55.5 M)", col="darkred", lty=1, lwd=2, cex = 0.8)
+do.call("clip", as.list(par("usr"))) # reset clip to full plot region before drawing legend
+legend("topright", legend="Region 3000-5500 (53M - 55.5M)", col="darkred", lty=1, lwd=2, cex=0.8, bg="white")
 
 
 ```
-
-(Omer's note: sohuldnt the regoin be between 50-70 mil? i am a bit confused on this part lol)
-
-(Ido: this region i marked is the one that shows the abnormally high GC pairs. I clarified it)
 
 We can see the high G-C pairs clustered around cells indexed 3000-5500, which correspond to the area between 53 M-55.5 M. The interesting part is the high density of these pairs, which seems abnormal compared to their distribution elsewhere along the chromosome.
 
@@ -296,5 +292,7 @@ We used AI (Claude) in several places:
 1.  To correctly use `grepl` to save the RDA file.
 2.  To fix an off-by-one bug in the `base_count` function
 3.  To find the function `which` used to filter the bases frequency in part 5
+4.  To find the `clip` function used to prevent trend lines from extending outside the plot region in the scatter plots
+5.  To fix PDF knitting issues using the `fvextra` package and `\DefineVerbatimEnvironment` for code line wrapping
 
-We also used some R documentation for several functions, namely: [legend](https://www.rdocumentation.org/packages/graphics/versions/3.6.2/topics/legend), [which](https://www.rdocumentation.org/packages/base/versions/3.6.2/topics/which)
+We also used some R documentation for several functions, namely: [legend](https://www.rdocumentation.org/packages/graphics/versions/3.6.2/topics/legend), [which](https://www.rdocumentation.org/packages/base/versions/3.6.2/topics/which), [clip](https://www.rdocumentation.org/packages/graphics/versions/3.6.2/topics/clip)
