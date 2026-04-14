@@ -1,0 +1,249 @@
+---
+title: "HW2"
+author: "Group 12 - Shir, Omer & Ido"
+date: "14/04/26"
+output:
+  pdf_document:
+    extra_dependencies: ["fvextra"]
+  html_document:
+    code_folding: show
+header-includes:
+  - \DefineVerbatimEnvironment{Highlighting}{Verbatim}{breaklines,commandchars=\\\{\}}
+editor_options:
+  markdown:
+    wrap: sentence
+---
+
+### Group:
+
+Group members (Name, ID, email)
+
+-   Ido Ravid, 207198177, ido.ravid\@mail.huji.ac.il
+
+-   Omer Sutovsky, 318735107 ,omer.sutovsky\@mail.huji.ac.il
+
+-   Shir Tsarfaty, 207718008, shir.tsarfaty\@mail.huji.ac.il
+
+### Paths and Data
+
+```{r paths, packages & global vars}
+if (!require('data.table')){
+  install.packages('data.table')
+  library('data.table')
+}
+library('tictoc')
+
+if (!require('manipulate')){
+  install.packages('manipulate')
+  library('manipulate')
+}
+
+
+reads_file = "data/TCGA-13-0723-10B_lib2_all_chr1.forward"
+
+beg_region <- 50000000
+end_region <- 60000000
+
+```
+### Reading the Data:
+
+```{r loading data}
+chr1_reads = fread(reads_file, col.names = c("Chr", "Loc", "Length"))
+
+```
+
+## Introduction
+This lab focuses on analyzing NGS fastq files, and specifically read coverage and depth. 
+
+## Part 1
+### Question 1
+
+The original, semi-naive implelmtatnion here is adapted from Yuval's second lecture, with additional logging for easier comparison.
+
+```{r q1-naive-loop}
+count_reads_naive <- function(reads, beg_region, end_region, log_every = 1e6) {
+  N <- end_region - beg_region + 1
+  read_line <- numeric(N)
+
+  first_read <- min(which(reads$Loc >= beg_region))
+  r <- first_read
+  start_time <- proc.time()["elapsed"]
+
+  while (reads$Loc[r] <= end_region) {
+    read_line[reads$Loc[r] - beg_region + 1] <- read_line[reads$Loc[r] - beg_region + 1] + 1
+    if ((r - first_read) %% log_every == 0) {
+      elapsed <- round(proc.time()["elapsed"] - start_time, 1)
+      cat("Progress: read", r, "| loc", reads$Loc[r], "| elapsed:", elapsed, "s\n")
+      flush.console()
+    }
+    r <- r + 1
+  }
+  read_line
+}
+```
+
+```{r q1-run}
+tic()
+counts_naive <- count_reads_naive(chr1_reads, beg_region, end_region)
+t_naive <- toc(quiet = TRUE)
+
+message("Total fragments in region: ", sum(counts_naive))
+message("Time taken: ", round(t_naive$toc - t_naive$tic, 2), "s")
+```
+
+### Question 2
+
+To find a better implementaiton, we looked at several options suggested in StackOverflow (links below), before finally settling on this one that uses `tabulate`. 
+
+We rely mostly on the assumption that the location list is already sorted (if it wasn't, it would have been an O(nlogn) task instead). The reason for our expectation for this to be faster is empirical-  we tried several options mentioned in StackOverflow, and this one seemed to do the trick.
+
+```{r q2-table}
+count_reads_table <- function(reads, beg_region, end_region) {
+  t0 <- proc.time()["elapsed"]
+
+  # keep only reads that fall within the region
+  locs <- reads$Loc[reads$Loc >= beg_region & reads$Loc <= end_region]
+  message("Filtering done: ", length(locs), " reads in region | ",
+          round(proc.time()["elapsed"] - t0, 2), "s")
+
+  # tabulate uses 1-based indexing, so shift locs to be relative to beg_region
+  counts <- tabulate(locs - beg_region + 1, nbins = end_region - beg_region + 1)
+  result <- counts
+  message("Done | total: ", round(proc.time()["elapsed"] - t0, 2), "s")
+
+  result
+}
+```
+
+```{r q2-run}
+tic()
+counts_table <- count_reads_table(chr1_reads, beg_region, end_region)
+t_table <- toc(quiet = TRUE)
+
+message("Total fragments in region: ", sum(counts_table))
+message("Time taken: ", round(t_table$toc - t_table$tic, 2), "s")
+```
+### Question 3
+To compare the functions, we create a benchmark test. the tests randomly selects a 1M window for 100 times. it run each function over that window, and stores the result. Here is the benchmark:
+
+```{r q3-benchmark}
+chr1_max_loc <- 247199205
+window_size  <- 1e6
+n_runs       <- 100
+
+times_naive  <- numeric(n_runs)
+times_tabulate <- numeric(n_runs)
+
+set.seed(42)
+starts <- sample(1:(chr1_max_loc - window_size), n_runs)
+
+for (i in 1:n_runs) {
+  beg <- starts[i]
+  end <- beg + window_size - 1
+
+  t0 <- proc.time()["elapsed"]
+  suppressMessages(count_reads_naive(chr1_reads, beg, end))
+  times_naive[i] <- proc.time()["elapsed"] - t0
+
+  t0 <- proc.time()["elapsed"]
+  suppressMessages(count_reads_table(chr1_reads, beg, end))
+  times_tabulate[i] <- proc.time()["elapsed"] - t0
+
+  if (i %% 10 == 0) { cat("Run", i, "/", n_runs, "\n"); flush.console() }
+}
+```
+
+
+And the results:
+
+```{r q3-plot}
+x_max <- 0.08
+breaks <- seq(0, x_max, length.out = 50)
+h_naive    <- hist(pmin(times_naive, x_max),    breaks = breaks, plot = FALSE)
+h_tabulate <- hist(pmin(times_tabulate, x_max), breaks = breaks, plot = FALSE)
+
+y_max <- max(h_naive$counts, h_tabulate$counts) * 1.1
+plot(0, type = "n", xlim = c(0, 0.08), ylim = c(-y_max, y_max),
+     xlab = "Time (seconds)", ylab = "Count",
+     main = "Runtime Distribution: Sorted Walk (down) vs. Tabulate (up)\n(100 random 1M-bp windows, chr1)",
+     yaxt = "n")
+
+yticks <- pretty(c(0, y_max))
+yticks <- yticks[yticks > 0]  # exclude 0 to avoid duplication at center
+axis(2, at = c(-yticks, 0, yticks), labels = c(yticks, 0, yticks))
+
+rect(h_tabulate$breaks[-length(h_tabulate$breaks)], 0,
+     h_tabulate$breaks[-1], h_tabulate$counts,
+     col = "#56B4E9", border = "white")
+rect(h_naive$breaks[-length(h_naive$breaks)], 0,
+     h_naive$breaks[-1], -h_naive$counts,
+     col = "#E69F00", border = "white")
+
+abline(h = 0, lwd = 1)
+abline(v = mean(times_naive),    col = "#E69F00", lwd = 2, lty = 2)
+abline(v = mean(times_tabulate), col = "#56B4E9", lwd = 2, lty = 2)
+
+legend("topright",
+       legend = c(sprintf("Tabulate (mean=%.3fs)", mean(times_tabulate)),
+                  sprintf("Sorted Walk (mean=%.3fs)", mean(times_naive))),
+       fill = c("#56B4E9", "#E69F00"))
+```
+We can clearly see that the tabulate algorithm is superior to the naive sorted-walk algorithm seen in the lecture.
+
+
+### Question 4
+As we've done in the lecture, creating a histogram of the marginal coverage distribution:
+
+```{r q4-coverage-hist}
+covered <- counts_table[counts_table > 0]
+max_cov <- min(max(covered), 50)
+
+read_hist <- hist(pmin(covered, max_cov),
+                  breaks = seq(0.5, max_cov + 0.5, by = 1),
+                  plot = FALSE)
+
+# log="y" in plot.histogram drops bars — draw manually
+plot(read_hist$mids, read_hist$counts,
+     type = "n", log = "y",
+     xlim = range(read_hist$breaks),
+     ylim = c(1, max(read_hist$counts) * 2),
+     xlab = "Coverage (reads per base)",
+     ylab = "Number of bases (log scale)",
+     main = sprintf("Base-level Coverage Distribution (covered bases only)\n(chr1, %dM-%dM bp)",
+                    beg_region/1e6, end_region/1e6),
+     xaxt = "n")
+
+rect(read_hist$breaks[-length(read_hist$breaks)], 1,
+     read_hist$breaks[-1], read_hist$counts,
+     col = "#56B4E9", border = "white")
+
+axis(1, at = 1:max_cov)
+
+text(read_hist$mids, read_hist$counts, read_hist$counts, pos = 3, cex = 0.9)
+```
+
+We can see the same tailed distribution we saw in class.
+
+## Part 2
+### Question 5
+### Question 6
+
+
+## Short summary
+
+In the first part, we experimented with optimizing the vector-reading function we saw in class. using the built-in , C-based functions we managed to do that pretty well. 
+
+In the second part
+@shir fill here 
+
+## External sources statement
+We read a few articles in StackOverflow to find reccomendations for optimizing the R function.
+Specifically relyed on this [article](https://stackoverflow.com/questions/17223308/fastest-way-to-count-occurrences-of-each-unique-element), and this specific [comment](https://stackoverflow.com/questions/17223308/fastest-way-to-count-occurrences-of-each-unique-element#17223496).
+
+We also used AI (Claude) to:
+
+1. help us correctly use the tabulate syntax in question 2
+2. To create the back-to-back histogram using rectangles
+3. help us debug missing rectangle bug in question 4 after using log transformation.
+
+@Shir add to this list please
