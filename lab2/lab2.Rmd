@@ -45,6 +45,7 @@ beg_region <- 50000000
 end_region <- 60000000
 
 ```
+
 ### Reading the Data:
 
 ```{r loading data}
@@ -53,9 +54,11 @@ chr1_reads = fread(reads_file, col.names = c("Chr", "Loc", "Length"))
 ```
 
 ## Introduction
-This lab focuses on analyzing NGS fastq files, and specifically read coverage and depth. 
+
+This lab focuses on analyzing NGS fastq files, and specifically read coverage and depth.
 
 ## Part 1
+
 ### Question 1
 
 The original, semi-naive implelmtatnion here is adapted from Yuval's second lecture, with additional logging for easier comparison.
@@ -93,9 +96,10 @@ message("Time taken: ", round(t_naive$toc - t_naive$tic, 2), "s")
 
 ### Question 2
 
-To find a better implementaiton, we looked at several options suggested in StackOverflow (links below), before finally settling on this one that uses `tabulate`. 
+To find a better implementaiton, we looked at several options suggested in StackOverflow (links below), before finally settling on this one that uses `tabulate`.
 
-We rely mostly on the assumption that the location list is already sorted (if it wasn't, it would have been an O(nlogn) task instead). The reason for our expectation for this to be faster is empirical-  we tried several options mentioned in StackOverflow, and this one seemed to do the trick.
+We rely mostly on the assumption that the location list is already sorted (if it wasn't, it would have been an O(nlogn) task instead).
+The reason for our expectation for this to be faster is empirical- we tried several options mentioned in StackOverflow, and this one seemed to do the trick.
 
 ```{r q2-table}
 count_reads_table <- function(reads, beg_region, end_region) {
@@ -123,8 +127,13 @@ t_table <- toc(quiet = TRUE)
 message("Total fragments in region: ", sum(counts_table))
 message("Time taken: ", round(t_table$toc - t_table$tic, 2), "s")
 ```
+
 ### Question 3
-To compare the functions, we create a benchmark test. the tests randomly selects a 1M window for 100 times. it run each function over that window, and stores the result. Here is the benchmark:
+
+To compare the functions, we create a benchmark test.
+the tests randomly selects a 1M window for 100 times.
+it run each function over that window, and stores the result.
+Here is the benchmark:
 
 ```{r q3-benchmark}
 chr1_max_loc <- 247199205
@@ -152,7 +161,6 @@ for (i in 1:n_runs) {
   if (i %% 10 == 0) { cat("Run", i, "/", n_runs, "\n"); flush.console() }
 }
 ```
-
 
 And the results:
 
@@ -188,10 +196,11 @@ legend("topright",
                   sprintf("Sorted Walk (mean=%.3fs)", mean(times_naive))),
        fill = c("#56B4E9", "#E69F00"))
 ```
+
 We can clearly see that the tabulate algorithm is superior to the naive sorted-walk algorithm seen in the lecture.
 
-
 ### Question 4
+
 As we've done in the lecture, creating a histogram of the marginal coverage distribution:
 
 ```{r q4-coverage-hist}
@@ -222,12 +231,14 @@ axis(1, at = 1:max_cov)
 text(read_hist$mids, read_hist$counts, read_hist$counts, pos = 3, cex = 0.9)
 ```
 
+Note that we log-scaled the graph so the 1st bin will fit.
 We can see the same tailed distribution we saw in class.
 
 ## Part 2
+
 ### Question 5.1 & 5.2:
+
 ```{r}
-# --- Question 5.1: Coverage across the analyzed region ---
 # Define the bin size (must be a multiple of 10,000)
 BIN_SIZE <- 10000 
 
@@ -244,46 +255,71 @@ bin_coverage <- function(base_counts, bin_size) {
 }
 ```
 
-```{r}
-# Set up a 1x2 plotting area to see both graphs side-by-side
-par(mfrow = c(1, 2))
+```{r fig.width=10, fig.height=8}
+# Compute full-chromosome coverage using tabulate (no region filter needed)
+full_chr_counts <- tabulate(chr1_reads$Loc)
+binned_data <- bin_coverage(full_chr_counts, BIN_SIZE)
+bin_positions_mb <- (seq_along(binned_data) * BIN_SIZE) / 1e6
 
-# 5.1: Full region coverage plot
-plot(bin_positions_mb, binned_data, 
+zoom_start <- 120
+zoom_end <- 150
+y_cap <- 1500
+
+par(mfrow = c(2, 1))
+
+# 5.1: Full chromosome coverage plot (capped y-axis, outliers marked)
+plot(bin_positions_mb, pmin(binned_data, y_cap), 
      type = "l", col = "steelblue",
      xlab = "Position on Chromosome 1 (Mb)", 
      ylab = "Reads per bin",
-     main = "Full Region Coverage")
+     main = "Full Chromosome Coverage",
+     ylim = c(0, y_cap))
 abline(h = mean(binned_data), col = "red", lty = 2)
+abline(v = c(zoom_start, zoom_end), col = "black", lty = 1, lwd = 1.5)
+# mark outlier bins above cap
+outliers <- which(binned_data > y_cap)
+points(bin_positions_mb[outliers], rep(y_cap, length(outliers)),
+       col = "red", pch = 17, cex = 0.7)
+legend("topright",
+       legend = c(sprintf("Mean (%.0f)", mean(binned_data)), "Zoom region",
+                  sprintf("Outliers (>%d)", y_cap)),
+       col = c("red", "black", "red"), lty = c(2, 1, NA),
+       pch = c(NA, NA, 17), lwd = c(1, 1.5, NA), cex = 0.8)
 
-# 5.2: Zoom-in plot (2Mb window)
-# Adjust these values based on your region of interest
-zoom_start <- 52
-zoom_end <- 54
+# 5.2: Zoom-in plot (20Mb window)
 plot(bin_positions_mb, binned_data, 
      type = "l", col = "darkorange",
      xlim = c(zoom_start, zoom_end),
+     ylim = c(0, y_cap),
      xlab = "Position on Chromosome 1 (Mb)", 
      ylab = "Reads per bin",
-     main = "Zoom-in (52Mb - 54Mb)")
+     main = sprintf("Zoom-in (%dMb - %dMb)", zoom_start, zoom_end))
 points(bin_positions_mb, binned_data, pch = 20, cex = 0.5, col = "darkorange")
 
 
 ```
+
 ## Discussion
-Based on the plots, we identify a clear genomic anomaly. In the Full Region Coverage plot, the area between 53Mb and 56Mb shows a significant and persistent increase in read depth, staying above the global mean. This elevated baseline suggests a potential Copy Number Gain in this segment. Conversely, the region from 50Mb to 52Mb represents a lower, likely diploid, background coverage.
 
+Based on the plots, we can spot several anomalies.
+In the first plot of the full chromosome, the area around 120-130Mb shows a clear gap with coverage of almost 0, which is related to the centeromer we mentioned in class.
 
+Right after the this part (\~130-145Mb), we see extreme outlier spikes, likely caused by reads mapping to duplicated segments.
+Additionally, the beginning of the chromosome (0-30Mb) also shows high coverage above the mean, which might indicate that several segments there were also copied multiple times.
 
 ### Question 6
+
 ```{r}
+# Filter out extreme outlier bins before fitting
+binned_no_outliers <- binned_data[binned_data <= y_cap]
+
 # Calculate parameters for the Normal distribution
-mu <- mean(binned_data)
-sigma <- sd(binned_data)
+mu <- mean(binned_no_outliers)
+sigma <- sd(binned_no_outliers)
 
 # Pre-calculate histogram and density curve to set proper axis limits
-h_data <- hist(binned_data, breaks = 30, plot = FALSE)
-x_vals <- seq(min(binned_data), max(binned_data), length = 100)
+h_data <- hist(binned_no_outliers, breaks = 30, plot = FALSE)
+x_vals <- seq(min(binned_no_outliers), max(binned_no_outliers), length = 100)
 y_vals <- dnorm(x_vals, mean = mu, sd = sigma)
 
 # Plot the histogram using freq = FALSE to correctly show density
@@ -292,7 +328,7 @@ plot(h_data, freq = FALSE,
      col = "lightblue", border = "white",
      xlab = "Reads per Bin",
      ylab = "Density",
-     main = "Marginal Distribution vs. Normal Fit",
+     main = sprintf("Marginal Distribution vs. Normal Fit\n(\u03bc=%.0f, \u03c3=%.0f)", mu, sigma),
      ylim = c(0, max(h_data$density, y_vals) * 1.3))
 
 # Overlay the Normal density curve
@@ -307,24 +343,28 @@ legend("topleft", legend = c("Observed Data", "Normal Fit"),
 
 
 ```
-The Normal distribution provides a good representation for the center of the data, as expected from the Central Limit Theorem for large bins. However, heavy tails can be observed, indicating a slight deviation from the ideal model. These deviations stem from the regions we identified with high copy numbers, which produce outlier coverage values that exceed the normal diploid average.
 
-
+The normal distribution does not seem to fit well at all - we could argue that the middle is somewhat normal, but even that doesn't seem correct, as it's not really bell-shaped.
+the main differences are in the heavy left tail of the distribution, and in the missing right tail of it.
+also the middle part looks more uniform then we'd expect.
 
 ## Short summary
 
-In the first part, we experimented with optimizing the vector-reading function we saw in class. using the built-in , C-based functions we managed to do that pretty well. 
+In the first part, we experimented with optimizing the vector-reading function we saw in class.
+using the built-in , C-based functions we managed to do that pretty well.
 
-In the second part,  we utilized genomic binning to identify a potential copy number gain between 53Mb and 56Mb and verified the data's fit to a Normal distribution.
+In the second part, we mapped the coverage across the entire chromosome using the NGS data.
+we looked for interesting and irregular regions, and tried to compare the distribution to a normal one.
 
 ## External sources statement
+
 We read a few articles in StackOverflow to find reccomendations for optimizing the R function.
 Specifically relyed on this [article](https://stackoverflow.com/questions/17223308/fastest-way-to-count-occurrences-of-each-unique-element), and this specific [comment](https://stackoverflow.com/questions/17223308/fastest-way-to-count-occurrences-of-each-unique-element#17223496).
 
 We also used AI (Claude) to:
 
-1. help us correctly use the tabulate syntax in question 2
-2. To create the back-to-back histogram using rectangles
-3. help us debug missing rectangle bug in question 4 after using log transformation.
-4. help us implement an efficient binning strategy using matrix operations and colSums.
-5. Assist with the multi-panel plot layout and fine-tuning the legend positioning to ensure all data remained visible.
+1.  help us correctly use the tabulate syntax in question 2
+2.  To create the back-to-back histogram using rectangles
+3.  help us debug missing rectangle bug in question 4 after using log transformation.
+4.  help us implement an efficient binning strategy using matrix operations and colSums.
+5.  Assist with the multi-panel plot layout and fine-tuning the legend positioning to ensure all data remained visible.
