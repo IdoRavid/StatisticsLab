@@ -102,21 +102,7 @@ We rely mostly on the assumption that the location list is already sorted (if it
 The reason for our expectation for this to be faster is empirical- we tried several options mentioned in StackOverflow, and this one seemed to do the trick.
 
 ```{r q2-table}
-count_reads_table <- function(reads, beg_region, end_region) {
-  t0 <- proc.time()["elapsed"]
-
-  # keep only reads that fall within the region
-  locs <- reads$Loc[reads$Loc >= beg_region & reads$Loc <= end_region]
-  message("Filtering done: ", length(locs), " reads in region | ",
-          round(proc.time()["elapsed"] - t0, 2), "s")
-
-  # tabulate uses 1-based indexing, so shift locs to be relative to beg_region
-  counts <- tabulate(locs - beg_region + 1, nbins = end_region - beg_region + 1)
-  result <- counts
-  message("Done | total: ", round(proc.time()["elapsed"] - t0, 2), "s")
-
-  result
-}
+source("../utils.R")
 ```
 
 ```{r q2-run}

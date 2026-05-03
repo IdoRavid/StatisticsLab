@@ -1,0 +1,220 @@
+---
+title: "HW3"
+author: "Group 12 - Shir, Omer & Ido"
+date: "03/05/26"
+output:
+  pdf_document:
+    extra_dependencies: ["fvextra"]
+  html_document:
+    code_folding: show
+header-includes:
+  - \DefineVerbatimEnvironment{Highlighting}{Verbatim}{breaklines,commandchars=\\\{\}}
+editor_options:
+  markdown:
+    wrap: sentence
+---
+
+### Group:
+
+Group members (Name, ID, email)
+
+-   Ido Ravid, 207198177, ido.ravid\@mail.huji.ac.il
+
+-   Omer Sutovsky, 318735107 ,omer.sutovsky\@mail.huji.ac.il
+
+-   Shir Tsarfaty, 207718008, shir.tsarfaty\@mail.huji.ac.il
+
+### Paths and Data
+
+```{r paths, packages & global vars}
+if (!require('data.table'))  { install.packages('data.table');  library('data.table') }
+if (!require('dplyr'))       { install.packages('dplyr');       library('dplyr') }
+if (!require('kableExtra'))  { install.packages('kableExtra');  library('kableExtra') }
+if (!require('dplyr')) { install.packages('dplyr'); library('dplyr') }
+if (!require('kableExtra')) { install.packages('kableExtra'); library('kableExtra') }
+
+reads_file  <- "../lab2/data/TCGA-13-0723-10B_lib2_all_chr1.forward"
+beg_region  <- 50000000
+end_region  <- 60000000
+```
+
+### Reading the Data:
+
+```{r loading data}
+chr1_reads <- fread(reads_file, col.names = c("Chr", "Loc", "Length"))
+```
+
+## Introduction
+
+In this lab we model base-level read coverage using the Poisson distribution and assess how well it fits the data.
+
+## Part 1
+
+### Question 1
+
+**Computing λ — mean coverage per base:**
+
+```{r compute-lambda}
+source("../utils.R")
+
+N      <- end_region - beg_region + 1
+cov    <- count_reads_table(chr1_reads, beg_region, end_region)
+lambda <- mean(cov)
+cat(sprintf("lambda = %.4f\n", lambda))
+```
+
+**Expected Poisson distribution and comparison:**
+
+```{r poisson-comparison, fig.width=7, fig.height=5}
+# observed proportions
+obs_counts <- tabulate(cov, nbins = max(cov) + 1)   # index k+1 = count of k
+obs_prop   <- obs_counts / N
+
+# expected Poisson probabilities
+k_vals   <- 0:max(cov)
+exp_prop <- dpois(k_vals, lambda)
+
+# --- Graph ---
+x_max    <- 6
+k_show   <- k_vals[k_vals <= x_max]
+obs_show <- pmax(obs_prop[k_show + 1], 1e-10)   # avoid log(0)
+exp_show <- pmax(exp_prop[k_show + 1], 1e-10)
+
+y_min <- 10^floor(log10(min(obs_show[obs_show > 1e-9], exp_show[exp_show > 1e-9])))
+
+plot(k_show, obs_show,
+     type = "h", lwd = 8, col = "#56B4E9", log = "y",
+     xlab = "Number of reads starting at a base (k)",
+     ylab = "Proportion of bases (log scale)",
+     main = sprintf("Observed vs. Poisson(%s) coverage distribution\n(chr1, %dMb\u2013%dMb)",
+                    signif(lambda, 2), beg_region/1e6, end_region/1e6),
+     xlim = c(-0.5, x_max + 0.5),
+     ylim = c(y_min, 1),
+     xaxt = "n")
+axis(1, at = k_show)
+lines(k_show + 0.2, exp_show, type = "h", lwd = 3, col = "#E69F00")
+legend("topright",
+       legend = c("Observed", sprintf("Poisson(\u03bb = %s)", signif(lambda, 2))),
+       col    = c("#56B4E9", "#E69F00"),
+       lwd    = c(8, 3),
+       bty    = "n")
+```
+
+The graph shows the expected poisson reads histogram compared to the observed histogram.
+Before we used log-scale it was hard to distinguish exactly since the distribution with lambda =0.036 is skewed.
+We can see that Poisson distribution does not really match the actual data, which is less left-skewed and more right-skewed.
+
+```{r poisson-table}
+
+
+obs_vals <- c(sapply(0:5, function(k) sum(cov == k) / N), sum(cov > 5) / N)
+exp_vals <- c(dpois(0:5, lambda), ppois(5, lambda, lower.tail = FALSE))
+
+# fixed decimal places: enough to show variation (all values are small proportions)
+fmt <- function(x) formatC(x, format = "f", digits = 7)
+
+data.frame(k = c(as.character(0:5), ">5"),
+           Observed = fmt(obs_vals),
+           Expected = fmt(exp_vals)) %>%
+  knitr::kable(align = "c",
+               caption = sprintf("Observed vs. Expected Poisson proportions (λ = %s)",
+                                 signif(lambda, 2))) %>%
+  kable_styling(bootstrap_options = c("bordered", "striped"), full_width = FALSE) %>%
+  column_spec(1:3, border_left = TRUE, border_right = TRUE)
+```
+
+It's harder for us to notice the difference in the table compared to the graph, but from the graph it's clear that the Poisson distribution is not a very good fit.
+
+### Question 2
+
+```{r q2-setup}
+BIN_SIZE <- 5000
+
+bin_counts <- sapply(seq(1, N - BIN_SIZE + 1, by = BIN_SIZE), function(i) {
+  sum(cov[i:(i + BIN_SIZE - 1)])
+}) # for each bin, we apply for the sum function over cov vector.
+
+lambda_bin <- lambda * BIN_SIZE  # expected mean under Poisson
+```
+
+**a. Robust estimators vs. Poisson prediction:**
+
+```{r q2a}
+med    <- median(bin_counts)
+iqr    <- IQR(bin_counts)
+# For Poisson, IQR ≈ 1.35 * sqrt(lambda) (normal approximation)
+exp_iqr <- qpois(0.75, lambda_bin) - qpois(0.25, lambda_bin)
+
+cat(sprintf("Median:       %.2f  (Poisson mean: %.2f)\n", med, lambda_bin))
+cat(sprintf("IQR:          %.2f  (Poisson expected IQR ≈ %.2f)\n", iqr, exp_iqr))
+```
+
+As we've seen in class, we use the median as a robust estimate of the center instead of the average.
+For spread, we use IQR as a robust estimator.
+
+We can see that the center is pretty close to the observed distribution with a small bias.
+The spread, however, is almost 5 times bigger than we expected under the Poisson model.
+
+**b. Histogram vs. Poisson:**
+
+```{r q2b, fig.width=7, fig.height=5}
+x_max_b   <- quantile(bin_counts, 0.99)
+bins_trim <- bin_counts[bin_counts <= x_max_b]
+
+h <- hist(bins_trim, breaks = 30, plot = FALSE)
+
+# smooth Poisson curve: dpois at every integer in range
+k_range   <- 0:max(bin_counts)
+pois_dens <- dpois(k_range, lambda_bin)
+
+plot(h, freq = FALSE,
+     col = "#56B4E9", border = "white",
+     xlim = c(min(h$breaks), max(bin_counts)),
+     ylim = c(0, max(h$density, pois_dens) * 1.1),
+     xlab = sprintf("Reads per bin (%d bp)", BIN_SIZE),
+     ylab = "Density",
+     main = sprintf("Fragment counts per bin vs. Poisson(\u03bb = %s)\n(chr1, %dMb\u2013%dMb)",
+                    signif(lambda_bin, 3), beg_region/1e6, end_region/1e6))
+lines(k_range, pois_dens, col = "#E69F00", lwd = 2)
+
+legend("topright",
+       legend = c("Observed", sprintf("Poisson(\u03bb = %s)", signif(lambda_bin, 3))),
+       fill   = c("#56B4E9", NA), border = c("black", NA),
+       lty    = c(NA, 1), col = c(NA, "#E69F00"), lwd = c(NA, 2),
+       bty    = "n")
+```
+
+In the lambda value we got, 177, the expected distribution looks almost identical to a normal distribution.
+As we mentioned in a, the center is aligned with the expectation, but the observed data spread is much higher, indicating once again that the Poisson model is not a good fit.
+
+**c. Variance-to-Mean Ratio (VMR):**
+
+```{r q2c}
+vmr <- var(bin_counts) / mean(bin_counts)
+cat(sprintf("Mean:     %.4f\n", mean(bin_counts)))
+cat(sprintf("Variance: %.4f\n", var(bin_counts)))
+cat(sprintf("VMR:      %.4f  (Poisson expectation: 1)\n", vmr))
+```
+
+For a Poisson distribution, VMR = 1 by definition (variance equals mean).
+The VMR we actually got, 14.6974, again indicates this model is not a good choice for our specific case.
+Perhaps one of our assumptions - uniformity or independence is incorrect.
+
+### Question 3
+
+@shir continue here
+
+## Short summary
+
+In the first part we tried to asses the Poisson model fit for our data, and saw it has significant inconsistencies with the observed distribution.
+
+In the second part, we @shir
+
+## External sources statement
+
+We also used AI (Claude) to:
+
+1.  move the function from lab2 to a utils file
+2.  edit the graph legend in q1.
+3.  use `knitr::kable` for table creation in q1.
+4.  correctly use `qpois` to calculate the expected IQR
