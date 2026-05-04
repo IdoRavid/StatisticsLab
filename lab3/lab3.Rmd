@@ -51,7 +51,7 @@ In this lab we model base-level read coverage using the Poisson distribution and
 
 ### Question 1
 
-**Computing λ — mean coverage per base:**
+**Computing Lambda — mean coverage per base:**
 
 ```{r compute-lambda}
 source("../utils.R")
@@ -93,7 +93,7 @@ plot(k_show, obs_show,
 axis(1, at = k_show)
 lines(k_show + 0.2, exp_show, type = "h", lwd = 3, col = "#E69F00")
 legend("topright",
-       legend = c("Observed", sprintf("Poisson(\u03bb = %s)", signif(lambda, 2))),
+       legend = c("Observed", sprintf("Poisson(lambda = %s)", signif(lambda, 2))),
        col    = c("#56B4E9", "#E69F00"),
        lwd    = c(8, 3),
        bty    = "n")
@@ -116,7 +116,7 @@ data.frame(k = c(as.character(0:5), ">5"),
            Observed = fmt(obs_vals),
            Expected = fmt(exp_vals)) %>%
   knitr::kable(align = "c",
-               caption = sprintf("Observed vs. Expected Poisson proportions (λ = %s)",
+               caption = sprintf("Observed vs. Expected Poisson proportions (lambda = %s)",
                                  signif(lambda, 2))) %>%
   kable_styling(bootstrap_options = c("bordered", "striped"), full_width = FALSE) %>%
   column_spec(1:3, border_left = TRUE, border_right = TRUE)
@@ -172,12 +172,12 @@ plot(h, freq = FALSE,
      ylim = c(0, max(h$density, pois_dens) * 1.1),
      xlab = sprintf("Reads per bin (%d bp)", BIN_SIZE),
      ylab = "Density",
-     main = sprintf("Fragment counts per bin vs. Poisson(\u03bb = %s)\n(chr1, %dMb\u2013%dMb)",
+     main = sprintf("Fragment counts per bin vs. Poisson(lambda = %s)\n(chr1, %dMb\u2013%dMb)",
                     signif(lambda_bin, 3), beg_region/1e6, end_region/1e6))
 lines(k_range, pois_dens, col = "#E69F00", lwd = 2)
 
 legend("topright",
-       legend = c("Observed", sprintf("Poisson(\u03bb = %s)", signif(lambda_bin, 3))),
+       legend = c("Observed", sprintf("Poisson(lambda = %s)", signif(lambda_bin, 3))),
        fill   = c("#56B4E9", NA), border = c("black", NA),
        lty    = c(NA, 1), col = c(NA, "#E69F00"), lwd = c(NA, 2),
        bty    = "n")
@@ -204,17 +204,30 @@ Perhaps one of our assumptions - uniformity or independence is incorrect.
 ```{r q3-setup}
 load("../lab1/data/chr1_str.rda")
 
-seq_region <- substr(chr1, 50000000, 100000000)
+gc_beg <- 50000000
+gc_end <- 100000000
+
+# coverage for the full 50Mb region
+cov_50mb <- count_reads_table(chr1_reads, gc_beg, gc_end)
+
+# bin coverage
+bin_counts_50mb <- sapply(seq(1, length(cov_50mb) - BIN_SIZE + 1, by = BIN_SIZE), function(i) {
+  sum(cov_50mb[i:(i + BIN_SIZE - 1)])
+})
+
+# GC for the same full 50Mb region
+seq_region <- substr(chr1, gc_beg, gc_end)
 split_seq  <- strsplit(seq_region, "")[[1]]
 
-# GC count per bin — upper bound prevents last bin from going out of bounds
-gc_binned <- sapply(seq(1, length(split_seq) - BIN_SIZE + 1, by = BIN_SIZE), function(i) {
+gc_binned_50mb <- sapply(seq(1, length(split_seq) - BIN_SIZE + 1, by = BIN_SIZE), function(i) {
   sum(split_seq[i:(i + BIN_SIZE - 1)] %in% c("C", "G", "c", "g"))
 })
 
-min_len <- min(length(bin_counts), length(gc_binned))
-cov_sub <- bin_counts[1:min_len]
-gc_sub  <- gc_binned[1:min_len]
+# align lengths just in case
+min_len <- min(length(bin_counts_50mb), length(gc_binned_50mb))
+
+cov_sub <- bin_counts_50mb[1:min_len]
+gc_sub  <- gc_binned_50mb[1:min_len]
 ```
 
 **a. Calculate correlation**
@@ -224,20 +237,24 @@ cor_val <- cor(gc_sub, cov_sub)
 cat(sprintf("Correlation between GC content and coverage: %.4f\n", cor_val))
 ```
 
-The calculated correlation coefficient is 0.8207, showing a strong positive linear relationship between the GC content and the observed read coverage per bin.
-Unlike the findings by Dohm which typically show reduced coverage at extreme GC levels, our region shows a strong positive relationship where higher GC content yields higher read coverage.
+The calculated correlation coefficient is 0.8351, showing a strong positive linear relationship between the GC content and the observed read coverage per bin.
+This direction is consistent with the findings in Dohm paper, who reported that read coverage was biased toward GC-rich regions, with increased read density in intervals of elevated GC content.
+Our result supports the idea that coverage is not uniform across the genome, but is affected by local sequence composition.
 
 ```{r q3b}
+y_cap <- 390
 plot(gc_sub, cov_sub,
      xlab = "GC count per bin",
      ylab = "Number of reads (coverage)",
      main = "GC Content vs. Binned Coverage",
-     pch = 20, col = rgb(0, 0.3, 0.7, 0.4), cex = 0.8)
+     pch = 20, col = rgb(0, 0.3, 0.7, 0.4), cex = 0.8, ylim= c(0,y_cap))
 abline(lm(cov_sub ~ gc_sub), col = "red", lwd = 2)
 ```
 
 From the plot we can observe that there is a strong positive linear relation between the GC content and the read coverage.
-Unlike the finding in the Dohm article, where coverage drops at extreme GC levels- our data shows a steady increase in coverage as GC content rises.
+This is similar to the trend reported by Dohm et al., where read coverage increased in regions with elevated GC content.
+In our plot, the relationship appears approximately linear over the observed GC range, while Dohm’s figures focus more generally on demonstrating GC-related coverage bias.
+In both cases, the main conclusion is that sequencing coverage is not uniform and is influenced by GC content.
 
 **c. Relationship to Part 1** The strong positive correlation between GC content and coverage explains the large spread and high variance-mean ratio observed in Part 1.
 The assumption of a uniform Poisson distribution doesn't hold since read coverage is not random or even across the chromosome.
