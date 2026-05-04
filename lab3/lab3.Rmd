@@ -4,6 +4,7 @@ author: "Group 12 - Shir, Omer & Ido"
 date: "03/05/26"
 output:
   pdf_document:
+    latex_engine: xelatex
     extra_dependencies: ["fvextra"]
   html_document:
     code_folding: show
@@ -30,8 +31,6 @@ Group members (Name, ID, email)
 if (!require('data.table'))  { install.packages('data.table');  library('data.table') }
 if (!require('dplyr'))       { install.packages('dplyr');       library('dplyr') }
 if (!require('kableExtra'))  { install.packages('kableExtra');  library('kableExtra') }
-if (!require('dplyr')) { install.packages('dplyr'); library('dplyr') }
-if (!require('kableExtra')) { install.packages('kableExtra'); library('kableExtra') }
 
 reads_file  <- "../lab2/data/TCGA-13-0723-10B_lib2_all_chr1.forward"
 beg_region  <- 50000000
@@ -202,13 +201,53 @@ Perhaps one of our assumptions - uniformity or independence is incorrect.
 
 ### Question 3
 
-@shir continue here
+```{r q3-setup}
+load("../lab1/data/chr1_str.rda")
+
+seq_region <- substr(chr1, 50000000, 100000000)
+split_seq  <- strsplit(seq_region, "")[[1]]
+
+# GC count per bin — upper bound prevents last bin from going out of bounds
+gc_binned <- sapply(seq(1, length(split_seq) - BIN_SIZE + 1, by = BIN_SIZE), function(i) {
+  sum(split_seq[i:(i + BIN_SIZE - 1)] %in% c("C", "G", "c", "g"))
+})
+
+min_len <- min(length(bin_counts), length(gc_binned))
+cov_sub <- bin_counts[1:min_len]
+gc_sub  <- gc_binned[1:min_len]
+```
+
+**a. Calculate correlation**
+
+```{r q3a}
+cor_val <- cor(gc_sub, cov_sub)
+cat(sprintf("Correlation between GC content and coverage: %.4f\n", cor_val))
+```
+
+The calculated correlation coefficient is 0.8207, showing a strong positive linear relationship between the GC content and the observed read coverage per bin.
+Unlike the findings by Dohm which typically show reduced coverage at extreme GC levels, our region shows a strong positive relationship where higher GC content yields higher read coverage.
+
+```{r q3b}
+plot(gc_sub, cov_sub,
+     xlab = "GC count per bin",
+     ylab = "Number of reads (coverage)",
+     main = "GC Content vs. Binned Coverage",
+     pch = 20, col = rgb(0, 0.3, 0.7, 0.4), cex = 0.8)
+abline(lm(cov_sub ~ gc_sub), col = "red", lwd = 2)
+```
+
+From the plot we can observe that there is a strong positive linear relation between the GC content and the read coverage.
+Unlike the finding in the Dohm article, where coverage drops at extreme GC levels- our data shows a steady increase in coverage as GC content rises.
+
+**c. Relationship to Part 1** The strong positive correlation between GC content and coverage explains the large spread and high variance-mean ratio observed in Part 1.
+The assumption of a uniform Poisson distribution doesn't hold since read coverage is not random or even across the chromosome.
+Instead, it is driven, to some extent, by local GC content.
 
 ## Short summary
 
 In the first part we tried to asses the Poisson model fit for our data, and saw it has significant inconsistencies with the observed distribution.
 
-In the second part, we @shir
+In the second part, we used genomic binning to looked at the correlation between GC content and read coverage.
 
 ## External sources statement
 
