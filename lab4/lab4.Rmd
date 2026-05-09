@@ -1,0 +1,269 @@
+---
+title: "HW4"
+author: "Group 12 - Shir, Omer & Ido"
+date: "10/05/26"
+output:
+  pdf_document:
+    latex_engine: xelatex
+    extra_dependencies: ["fvextra"]
+  html_document:
+    code_folding: show
+header-includes:
+  - \DefineVerbatimEnvironment{Highlighting}{Verbatim}{breaklines,commandchars=\\\{\}}
+editor_options:
+  markdown:
+    wrap: sentence
+---
+
+### Group:
+
+Group members (Name, ID, email)
+
+-   Ido Ravid, 207198177, ido.ravid\@mail.huji.ac.il
+
+-   Omer Sutovsky, 318735107 ,omer.sutovsky\@mail.huji.ac.il
+
+-   Shir Tsarfaty, 207718008, shir.tsarfaty\@mail.huji.ac.il
+
+### Paths and Data
+
+```{r paths, packages & global vars}
+if (!require('data.table'))  { install.packages('data.table');  library('data.table') }
+if (!require('splines'))     { install.packages('splines');     library('splines') }
+
+reads_file  <- "../lab2/data/TCGA-13-0723-10B_lib2_all_chr1.forward"
+chr1_file   <- "../lab1/data/chr1_str.rda"
+
+beg_region  <- 50000000
+end_region  <- 100000000  # 50Mb region as in lab3 Q3
+BIN_SIZE    <- 5000
+```
+
+### Reading the Data:
+
+```{r loading data}
+source("../utils.R")
+
+# Load reads data
+chr1_reads <- fread(reads_file, col.names = c("Chr", "Loc", "Length"))
+
+# Load chromosome sequence
+load(chr1_file)
+
+# Calculate coverage for the 50Mb region
+N <- end_region - beg_region + 1
+cov <- count_reads_table(chr1_reads, beg_region, end_region)
+
+# Bin coverage
+bin_counts <- sapply(seq(1, N - BIN_SIZE + 1, by = BIN_SIZE), function(i) {
+  sum(cov[i:(i + BIN_SIZE - 1)])
+})
+
+# Calculate GC content for the same region
+seq_region <- substr(chr1, beg_region, end_region)
+split_seq  <- strsplit(seq_region, "")[[1]]
+
+gc_binned <- sapply(seq(1, length(split_seq) - BIN_SIZE + 1, by = BIN_SIZE), function(i) {
+  sum(split_seq[i:(i + BIN_SIZE - 1)] %in% c("C", "G", "c", "g"))
+})
+
+# Align lengths and convert GC to proportions
+min_len <- min(length(bin_counts), length(gc_binned))
+reads_data <- bin_counts[1:min_len]
+gc_data <- gc_binned[1:min_len] / BIN_SIZE
+
+cat(sprintf("Data loaded: %d bins, GC range: %.2f-%.2f\n",
+            length(reads_data), min(gc_data), max(gc_data)))
+```
+
+## Introduction
+In this lab we are fitting a non-parametric (homoscedastic) spline regression,
+to estimate the reads-GC content relationship. Our assumption is that the the relationship is continuous and therefore a spline regression is a valid tool for modelling it. Once we have this function, we can "remove" it from the actual reads data and analyze the connection between reads and mutation in the chromosome.
+
+
+## Part 1
+
+### Candidate Models
+
+We fit four different non-parametric spline models:
+
+```{r model-fitting}
+# Create prediction grid for all models
+gc_grid <- seq(min(gc_data), max(gc_data), length.out = 500)
+pred_grid <- data.frame(gc_data = gc_grid)
+
+# Store models and their info
+models <- list()
+preds_list <- list()
+model_info <- data.frame()
+
+# ===== MODEL 1:  cubic, 3 knots at quartiles =====
+knots_1 <- quantile(gc_data, probs = c(0.25, 0.5, 0.75))
+model1 <- lm(reads_data ~ bs(gc_data, knots = knots_1, degree = 3))
+preds_1 <- predict(model1, pred_grid)
+
+models[[1]] <- model1
+preds_list[[1]] <- preds_1
+model_info <- rbind(model_info, data.frame(
+  name = "model1",
+  description = "3 quartile knots, cubic"
+))
+
+# ===== MODEL 2: cubic, 3 knots at 1/3 and 2/3 precentiles  =====
+knots_2 <- quantile(gc_data, probs = c(1/3, 2/3))
+model2 <- lm(reads_data ~ bs(gc_data, knots = knots_2, degree = 3))
+preds_2 <- predict(model2, pred_grid)
+
+models[[2]] <- model2
+preds_list[[2]] <- preds_2
+model_info <- rbind(model_info, data.frame(
+  name = "model2",
+  description = "2 knots at 1/3 and 2/3, cubic"
+))
+
+# ===== MODEL 3: cubic, 1 knot at median =====
+knots_3 <- median(gc_data)
+model3 <- lm(reads_data ~ bs(gc_data, knots = knots_3, degree = 3))
+preds_3 <- predict(model3, pred_grid)
+
+models[[3]] <- model3
+preds_list[[3]] <- preds_3
+model_info <- rbind(model_info, data.frame(
+  name = "model3",
+  description = "1 median knot, cubic"
+))
+
+# ===== MODEL 4: quadratic,  3 knots at quartiles =====
+model4 <- lm(reads_data ~ bs(gc_data, knots = knots_1, degree = 2))
+preds_4 <- predict(model4, pred_grid)
+
+models[[4]] <- model4
+preds_list[[4]] <- preds_4
+model_info <- rbind(model_info, data.frame(
+  name = "model4",
+  description = "3 quartile knots, quadratic (degree 2)"
+))
+
+cat("=== Models Fitted ===\n")
+print(model_info)
+```
+
+### Question 1: Individual model plots
+
+```{r q1-model-comparison, fig.width=12, fig.height=14}
+par(mfrow = c(4, 1), mar = c(4, 4, 2, 1))
+
+model_colors <- c("red", "blue", "green", "purple")
+model_names <- c("model1", "model2", "model3", "model4")
+
+for (i in 1:4) {
+  plot(gc_data, reads_data,
+       col = rgb(0, 0, 0, 0.2),
+       pch = 20, cex = 0.4,
+       xlab = "GC Content (proportion)",
+       ylab = "Reads per bin",
+       main = paste0(model_names[i], ": ", model_info$description[i]),
+       ylim = c(0, 400))
+
+  # Add model line
+  lines(gc_grid, preds_list[[i]], col = model_colors[i], lwd = 3)
+
+  # Add reference lines for knots (if applicable)
+  if (i == 1) {
+    abline(v = knots_1, col = model_colors[i], lty = 2, lwd = 2.5)
+  }
+  if (i == 2) {
+    abline(v = knots_2, col = model_colors[i], lty = 2, lwd = 2.5)
+  }
+  if (i == 3) {
+    abline(v = knots_3, col = model_colors[i], lty = 2, lwd = 2.5)
+  }
+}
+
+par(mfrow = c(1, 1))
+```
+
+We se generally that all 4 models fit well the general pattern of the data, with the extraploation part around 0.6 GC and above being differnt between the different models.
+
+### Question 2: Residual analysis (all models)
+
+```{r q2-residuals-comparison, fig.width=12, fig.height=14}
+par(mfrow = c(4, 1), mar = c(4, 4, 2, 1))
+
+residuals_list <- lapply(models, residuals)
+
+for (i in 1:4) {
+  residuals_i <- residuals_list[[i]]
+
+  plot(gc_data, residuals_i,
+       col = rgb(0, 0, 0, 0.5),
+       pch = 20, cex = 0.4,
+       xlab = "GC Content (proportion)",
+       ylab = "Residuals",
+       main = paste0(model_names[i], ": Residuals vs GC"),
+       ylim = c(-200, 200))
+  abline(h = 0, col = "red", lty = 2, lwd = 1.5)
+}
+
+par(mfrow = c(1, 1))
+```
+The residual graphs between the different models are largely identical, and it's hard for us to spot visually any meaningful difference. 
+
+### Question 3: Model quality metrics comparison
+
+```{r q3-metrics-table}
+# Calculate metrics for all models
+metrics_table <- data.frame()
+
+for (i in 1:4) {
+  mod <- models[[i]]
+  resid <- residuals_list[[i]]
+
+  rmse <- sqrt(mean(resid^2))
+  r2 <- summary(mod)$r.squared
+  adj_r2 <- summary(mod)$adj.r.squared
+  aic <- AIC(mod)
+  bic <- BIC(mod)
+
+  # Heteroscedasticity check
+  gc_low <- gc_data < quantile(gc_data, 0.25)
+  gc_high <- gc_data > quantile(gc_data, 0.75)
+  sd_ratio <- sd(resid[gc_high]) / sd(resid[gc_low])
+
+  metrics_table <- rbind(metrics_table, data.frame(
+    Model = model_names[i],
+    RMSE = round(rmse, 3),
+    R2 = round(r2, 4),
+    Adj_R2 = round(adj_r2, 4),
+    SD_ratio = round(sd_ratio, 2),
+    stringsAsFactors = FALSE
+  ))
+}
+
+cat("\n=== Model Comparison Table ===\n")
+print(metrics_table)
+
+```
+We tried to tweak the amount of knots and the degree of the splines, it mostly had little effect. 
+The parameter that impacted most was the amount of knots, which makes sense that will allow for better fitting of the data. 
+
+We calculated the standard deviation of residuals, in the top and bottom quartiles of GC content and calculated their ratio. We expected the value to be close to 1, since assuming homoscadacity the varaince should be more or less uniform across different GC values. The 2.25 SD ratio indicates we have heteroscedastic data distribution, and we might need to attend to that in later labs.
+
+## Part 2
+ @add
+ 
+ 
+## Short summary
+We fitted 4 spline regression models with different parameters, and looked at how well each model fitted. We generally didn't see much diffnece between the models we selected. We did manage to notice that the model ability to explain the data is capped at ~0.75 R2. A possible explanation we came up with was the Homoscadacity assumption is incorrect, as we shown with the SD ratio statistic.
+
+
+ @add
+ 
+ 
+## External sources statement
+
+We used AI (Claude) to:
+1. calculate SD ratio to verify homoscedacity
+2. stack the graphs correctly in q1, q2
+3. fix data loading error in bin size calculation. 
+ @add
