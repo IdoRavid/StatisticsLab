@@ -258,8 +258,76 @@ We expected the value to be close to 1, since assuming homoscadacity the varianc
 The 2.25 SD ratio indicates we have heteroscedastic data distribution, and we might need to attend to that in later labs.
 
 ## Part 2
+### Question 4 : Prediction Function
+```{r q4-Prediction Function}
+# Prepare the data frame first
+full_df <- data.frame(reads = reads_data, gc = gc_data) 
 
-@add
+# Define the prediction function 
+evaluate_spline <- function(train_data, val_data) {
+  # Fit spline model on training data (using Model 1 parameters)
+  train_knots <- quantile(train_data$gc, probs = c(0.25, 0.5, 0.75))
+  fit <- lm(reads ~ bs(gc, knots = train_knots, degree = 3), data = train_data)
+  
+  # Predict on validation data
+  preds <- predict(fit, newdata = val_data)
+  
+  # Calculate RMSE
+  rmse_val <- sqrt(mean((val_data$reads - preds)^2))
+  return(rmse_val)
+}
+
+# Create a split for visual check
+set.seed(123)
+idx_viz <- sample(seq_len(nrow(full_df)), size = floor(0.5 * nrow(full_df)))
+train_viz <- full_df[idx_viz, ]
+val_viz   <- full_df[-idx_viz, ]
+
+# Train model on the training set and plot against validation set
+viz_knots <- quantile(train_viz$gc, probs = c(0.25, 0.5, 0.75))
+fit_viz <- lm(reads ~ bs(gc, knots = viz_knots, degree = 3), data = train_viz)
+
+# Create a smooth line for the prediction
+gc_grid_viz <- seq(min(full_df$gc), max(full_df$gc), length.out = 300)
+line_preds <- predict(fit_viz, newdata = data.frame(gc = gc_grid_viz))
+
+# The Plot: GC vs. Coverage 
+plot(val_viz$gc, val_viz$reads, 
+     col = rgb(0, 0, 0, 0.2), pch = 20, cex = 0.5,
+     xlab = "GC Content (proportion)", ylab = "Reads (coverage)",
+     main = "Visual Validation: Model trained on Train Set vs. Validation Points")
+lines(gc_grid_viz, line_preds, col = "red", lwd = 3)
+legend("topleft", legend=c("Validation Data", "Spline Fit (Train)"), 
+       col=c("gray", "red"), pch=c(20, NA), lwd=c(NA, 3))
+```
+The RMSE drops quickly at first and then levels off, showing that once the model learns the main trend, adding more data doesn't really change the results.
+
+### Question 5: RMSE vs. Training Sample Size
+```{r q4-Prediction Function}
+
+# Define a range of sample sizes to test (from 10 up to 5000)
+sample_sizes <- seq(10, 5000, length.out = 20)
+results <- data.frame(n = sample_sizes, rmse = NA)
+
+# Loop through sample sizes to see how performance changes
+for(i in seq_along(sample_sizes)) {
+  n <- floor(sample_sizes[i])
+  # Take a random sample of size n from our training pool
+  temp_train <- train_viz[sample(nrow(train_viz), n), ]
+  
+  # Evaluate using the function from section (d)
+  results$rmse[i] <- evaluate_spline(temp_train, val_viz)
+}
+
+# Plot the relationship between sample size and prediction quality
+plot(results$n, results$rmse, type = "b", pch = 19, col = "darkblue",
+     xlab = "Training Sample Size", 
+     ylab = "Validation RMSE",
+     main = "Learning Curve: RMSE vs. Training Size",
+     ylim = c(0, 100))
+grid()
+```
+We saw that the RMSE drops sharply from about 700 at the start and levels off to 26 almost immediately. This shows the model learns the main trend with very little data, and adding more observations doesn't significantly improve its accuracy.
 
 ## Short summary
 
@@ -267,8 +335,7 @@ We fitted 4 spline regression models with different parameters, and looked at ho
 We generally didn't see much diffnece between the models we selected.
 We did manage to notice that the model ability to explain the data is capped at \~0.75 R2.
 A possible explanation we came up with was the Homoscadacity assumption is incorrect, as we shown with the SD ratio statistic.
-
-@add
+In the second part, our validation tests showed that the RMSE starts very high when the training sample is tiny, but it drops sharply almost immediately. We saw that the model picks up the main GC-coverage trend very quickly. Once it has around 500 observations, the accuracy levels off, showing that it’s highly efficient at capturing the biological signal even from small datasets.
 
 ## External sources statement
 
@@ -276,4 +343,4 @@ We used AI (Claude) to: 1.
 calculate SD ratio to verify homoscedacity 2.
 stack the graphs correctly in q1, q2 3.
 fix data loading error in bin size calculation.
-@add
+Adjust the learning curve scale for better visualization.
