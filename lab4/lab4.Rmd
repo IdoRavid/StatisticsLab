@@ -77,9 +77,10 @@ cat(sprintf("Data loaded: %d bins, GC range: %.2f-%.2f\n",
 ```
 
 ## Introduction
-In this lab we are fitting a non-parametric (homoscedastic) spline regression,
-to estimate the reads-GC content relationship. Our assumption is that the the relationship is continuous and therefore a spline regression is a valid tool for modelling it. Once we have this function, we can "remove" it from the actual reads data and analyze the connection between reads and mutation in the chromosome.
 
+In this lab we are fitting a non-parametric (homoscedastic) spline regression, to estimate the reads-GC content relationship.
+Our assumption is that the the relationship is continuous and therefore a spline regression is a valid tool for modelling it.
+Once we have this function, we can "remove" it from the actual reads data and analyze the connection between reads and mutation in the chromosome.
 
 ## Part 1
 
@@ -178,12 +179,15 @@ for (i in 1:4) {
   if (i == 3) {
     abline(v = knots_3, col = model_colors[i], lty = 2, lwd = 2.5)
   }
+  if (i == 4) {
+    abline(v = knots_1, col = model_colors[i], lty = 2, lwd = 2.5)
+  }
 }
 
 par(mfrow = c(1, 1))
 ```
 
-We se generally that all 4 models fit well the general pattern of the data, with the extraploation part around 0.6 GC and above being differnt between the different models.
+We see generally that all 4 models fit well the general pattern of the data, with the extrapolation part around 0.6 GC and above being different between the different models.
 
 ### Question 2: Residual analysis (all models)
 
@@ -207,7 +211,8 @@ for (i in 1:4) {
 
 par(mfrow = c(1, 1))
 ```
-The residual graphs between the different models are largely identical, and it's hard for us to spot visually any meaningful difference. 
+
+The residual graphs between the different models are largely identical, and it's hard for us to spot visually any meaningful difference.
 
 ### Question 3: Model quality metrics comparison
 
@@ -244,26 +249,31 @@ cat("\n=== Model Comparison Table ===\n")
 print(metrics_table)
 
 ```
-We tried to tweak the amount of knots and the degree of the splines, it mostly had little effect. 
-The parameter that impacted most was the amount of knots, which makes sense that will allow for better fitting of the data. 
 
-We calculated the standard deviation of residuals, in the top and bottom quartiles of GC content and calculated their ratio. We expected the value to be close to 1, since assuming homoscadacity the varaince should be more or less uniform across different GC values. The 2.25 SD ratio indicates we have heteroscedastic data distribution, and we might need to attend to that in later labs.
+We tried to tweak the amount of knots and the degree of the splines, it mostly had little effect.
+The parameter that impacted most was the amount of knots, which makes sense that will allow for better fitting of the data.
+
+We calculated the standard deviation of residuals, in the top and bottom quartiles of GC content and calculated their ratio.
+We expected the value to be close to 1, since assuming homoscadacity the variance should be more or less uniform across different GC values.
+The 2.25 SD ratio indicates we have heteroscedastic data distribution, and we might need to attend to that in later labs.
 
 ## Part 2
- @add
- 
- 
+
+@add
+
 ## Short summary
-We fitted 4 spline regression models with different parameters, and looked at how well each model fitted. We generally didn't see much diffnece between the models we selected. We did manage to notice that the model ability to explain the data is capped at ~0.75 R2. A possible explanation we came up with was the Homoscadacity assumption is incorrect, as we shown with the SD ratio statistic.
 
+We fitted 4 spline regression models with different parameters, and looked at how well each model fitted.
+We generally didn't see much diffnece between the models we selected.
+We did manage to notice that the model ability to explain the data is capped at \~0.75 R2.
+A possible explanation we came up with was the Homoscadacity assumption is incorrect, as we shown with the SD ratio statistic.
 
- @add
- 
- 
+@add
+
 ## External sources statement
 
-We used AI (Claude) to:
-1. calculate SD ratio to verify homoscedacity
-2. stack the graphs correctly in q1, q2
-3. fix data loading error in bin size calculation. 
- @add
+We used AI (Claude) to: 1.
+calculate SD ratio to verify homoscedacity 2.
+stack the graphs correctly in q1, q2 3.
+fix data loading error in bin size calculation.
+@add
