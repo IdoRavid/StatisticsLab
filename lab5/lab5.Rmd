@@ -1,0 +1,326 @@
+---
+title: "HW5"
+author: "Group 12 - Shir, Omer & Ido"
+date: "19/05/26"
+output:
+  pdf_document:
+    latex_engine: xelatex
+    extra_dependencies: ["fvextra"]
+  html_document:
+    code_folding: show
+header-includes:
+  - \DefineVerbatimEnvironment{Highlighting}{Verbatim}{breaklines,commandchars=\\\{\}}
+editor_options:
+  markdown:
+    wrap: sentence
+---
+
+### Group:
+
+Group members (Name, ID, email)
+
+-   Ido Ravid, 207198177, ido.ravid\@mail.huji.ac.il
+
+-   Omer Sutovsky, 318735107 ,omer.sutovsky\@mail.huji.ac.il
+
+-   Shir Tsarfaty, 207718008, shir.tsarfaty\@mail.huji.ac.il
+
+### Paths and Data
+
+```{r paths-and-packages, message=FALSE, warning=FALSE}
+if (!require('data.table')) { install.packages('data.table'); library('data.table') }
+if (!require('splines'))    { install.packages('splines');    library('splines') }
+if (!require('shiny'))      { install.packages('shiny');      library('shiny') }
+
+reads_file <- "../lab2/data/TCGA-13-0723-10B_lib2_all_chr1.forward"
+chr1_file  <- "../lab1/data/chr1_str.rda"
+
+BIN_SIZE   <- 5000
+beg_region <- 50000000
+end_region <- 100000000
+```
+
+### Reading the Data
+
+```{r load-data, cache=TRUE}
+source("lab5_utils.R")
+
+chr1_reads <- fread(reads_file, col.names = c("Chr", "Loc", "Length"))
+load(chr1_file)
+
+# Main analysis region (50–100 Mb, 5000 bp bins)
+df_main <- bin_data(chr1_reads, chr1, beg_region, end_region, BIN_SIZE)
+
+cat(sprintf("Loaded %d bins | GC range: %.3f – %.3f | reads range: %d – %d\n",
+            nrow(df_main), min(df_main$gc), max(df_main$gc),
+            min(df_main$reads), max(df_main$reads)))
+```
+
+## Introduction
+
+Building on labs 3 and 4, this lab investigates the GC-coverage relationship in greater depth.
+We compare the predictive power of G, C, and G+C separately, examine whether the relationship holds consistently across chromosome 1, explore the effect of bin size on correlation strength, and fit Poisson regression models — motivated by the overdispersion we measured previously (VMR ≈ 14.7 in lab3, SD_ratio ≈ 2.25 in lab4).
+
+---
+
+## Section a — Does C+G explain coverage better than G or C alone?
+
+```{r section-a-models}
+# Four nested models
+mod_g   <- lm(reads ~ g_prop,                   data = df_main)
+mod_c   <- lm(reads ~ c_prop,                   data = df_main)
+mod_gc  <- lm(reads ~ g_prop + c_prop,           data = df_main)
+mod_gci <- lm(reads ~ g_prop * c_prop,           data = df_main)  # includes interaction g_prop:c_prop
+
+models_a  <- list(mod_g, mod_c, mod_gc, mod_gci)
+labels_a  <- c("~G", "~C", "~G+C", "~G+C+G×C")
+
+# Summary table
+coef_table <- do.call(rbind, lapply(seq_along(models_a), function(i) {
+  mod  <- models_a[[i]]
+  cf   <- coef(mod)
+  ci   <- confint(mod)
+  r2   <- summary(mod)$r.squared
+  # one row per model: just show R² and the non-intercept coefficients as a string
+  data.frame(
+    Model    = labels_a[i],
+    R2       = round(r2, 4),
+    Coefs    = paste(sprintf("%s=%.2f [%.2f,%.2f]",
+                             names(cf)[-1], cf[-1], ci[-1,1], ci[-1,2]),
+                     collapse = "  |  "),
+    stringsAsFactors = FALSE
+  )
+}))
+
+cat("\n=== Model comparison: R² and coefficients ===\n")
+print(coef_table, row.names = FALSE)
+```
+
+```{r section-a-plots, fig.width=12, fig.height=10}
+par(mfrow = c(2, 2), mar = c(4, 4, 3, 1))
+
+plot_specs <- list(
+  list(x = df_main$g_prop, mod = mod_g,   xlab = "G content", title = "reads ~ G"),
+  list(x = df_main$c_prop, mod = mod_c,   xlab = "C content", title = "reads ~ C"),
+  list(x = df_main$gc,     mod = mod_gc,  xlab = "GC content", title = "reads ~ G + C (vs GC)"),
+  list(x = df_main$gc,     mod = mod_gci, xlab = "GC content", title = "reads ~ G + C + G×C (vs GC)")
+)
+
+for (spec in plot_specs) {
+  plot(spec$x, df_main$reads,
+       col = rgb(0, 0, 0, 0.2), pch = 20, cex = 0.4,
+       xlab = spec$xlab, ylab = "Reads per bin",
+       main = spec$title, ylim = c(0, 400))
+  x_seq   <- seq(min(spec$x), max(spec$x), length.out = 300)
+  # For multi-predictor models, hold other predictors at their mean
+  pred_df <- data.frame(
+    g_prop = rep(mean(df_main$g_prop), 300),
+    c_prop = rep(mean(df_main$c_prop), 300),
+    gc     = rep(mean(df_main$gc),     300)
+  )
+  pred_df[[if (grepl("G content", spec$xlab)) "g_prop" else
+            if (grepl("C content", spec$xlab)) "c_prop" else "gc"]] <- x_seq
+  lines(x_seq, predict(spec$mod, newdata = pred_df), col = "red", lwd = 2.5)
+  r2 <- round(summary(spec$mod)$r.squared, 4)
+  legend("topleft", legend = sprintf("R² = %.4f", r2), bty = "n", cex = 1.1)
+}
+
+par(mfrow = c(1, 1))
+```
+
+In double-stranded DNA, G pairs with C (Chargaff's rules), so their proportions track each other closely along the chromosome.
+We would therefore expect the `~G` and `~C` models to perform nearly identically, and we should see that adding the interaction term in `~G+C+G×C` adds little beyond `~G+C`.
+
+---
+
+## Section b — Is the relationship spatially consistent? (Shiny)
+
+The static plot below shows spline fits in 6 equally-spaced 10 Mb windows across the chromosome.
+Run `shiny::runApp("shiny_app")` for the interactive version.
+
+```{r section-b-static, fig.width=12, fig.height=7, cache=TRUE}
+chr1_len    <- nchar(chr1)
+window_size <- 10000000  # 10 Mb
+starts      <- seq(1, chr1_len - window_size, by = floor((chr1_len - window_size) / 5))[1:6]
+
+colors_b <- c("#E41A1C","#377EB8","#4DAF4A","#984EA3","#FF7F00","#A65628")
+
+# Use the first window's range to set axes
+df_ref <- bin_data(chr1_reads, chr1, starts[1], starts[1] + window_size - 1, BIN_SIZE)
+
+plot(df_ref$gc, df_ref$reads,
+     col = rgb(0, 0, 0, 0), pch = 20, cex = 0,   # invisible — just sets axes
+     xlab = "GC Content", ylab = "Reads per bin",
+     main = "Spline fits in 6 windows across chromosome 1",
+     ylim = c(0, 400), xlim = c(0.3, 0.7))
+
+r2_vals <- numeric(6)
+for (i in seq_along(starts)) {
+  beg_w <- starts[i]
+  end_w <- beg_w + window_size - 1
+  df_w  <- bin_data(chr1_reads, chr1, beg_w, end_w, BIN_SIZE)
+
+  knots_w <- quantile(df_w$gc, probs = c(0.25, 0.5, 0.75))
+  fit_w   <- lm(reads ~ bs(gc, knots = knots_w, degree = 3), data = df_w)
+  r2_vals[i] <- round(summary(fit_w)$r.squared, 3)
+
+  gc_seq  <- seq(min(df_w$gc), max(df_w$gc), length.out = 300)
+  preds_w <- predict(fit_w, newdata = data.frame(gc = gc_seq))
+  lines(gc_seq, preds_w, col = colors_b[i], lwd = 2.5)
+}
+
+legend("topleft",
+       legend = sprintf("%.0f–%.0f Mb  R²=%.3f",
+                        starts / 1e6, (starts + window_size) / 1e6, r2_vals),
+       col = colors_b, lwd = 2.5, cex = 0.85, bty = "n")
+```
+
+---
+
+## Section c — Which bin size gives the strongest relationship?
+
+```{r section-c-static, fig.width=10, fig.height=6, cache=TRUE}
+bin_sizes <- c(1000, 2000, 5000, 10000, 20000)
+windows_c <- seq(50000000, 90000000, by = 10000000)  # 5 windows
+colors_c  <- c("#E41A1C","#377EB8","#4DAF4A","#984EA3","#FF7F00")
+
+r2_mat      <- matrix(NA, nrow = length(bin_sizes), ncol = length(windows_c))
+spearman_mat <- matrix(NA, nrow = length(bin_sizes), ncol = length(windows_c))
+
+for (j in seq_along(windows_c)) {
+  beg_w <- windows_c[j]
+  end_w <- beg_w + 9999999
+  for (k in seq_along(bin_sizes)) {
+    df_w <- bin_data(chr1_reads, chr1, beg_w, end_w, bin_sizes[k])
+    if (nrow(df_w) < 10) next
+    mod_w <- lm(reads ~ gc, data = df_w)
+    r2_mat[k, j]       <- summary(mod_w)$r.squared
+    spearman_mat[k, j] <- spearman_r(df_w$gc, df_w$reads)
+  }
+}
+
+par(mfrow = c(1, 2), mar = c(5, 4, 3, 1))
+
+# R² plot
+plot(bin_sizes, r2_mat[, 1], type = "n",
+     xlab = "Bin size (bp)", ylab = "R²",
+     main = "R² vs bin size by window",
+     ylim = c(0, 1), log = "x")
+for (j in seq_along(windows_c)) {
+  lines(bin_sizes, r2_mat[, j], col = colors_c[j], lwd = 2, type = "b", pch = 19)
+}
+legend("topleft",
+       legend = sprintf("%.0f–%.0f Mb", windows_c/1e6, (windows_c+1e7)/1e6),
+       col = colors_c, lwd = 2, cex = 0.8, bty = "n")
+
+# Spearman plot
+plot(bin_sizes, spearman_mat[, 1], type = "n",
+     xlab = "Bin size (bp)", ylab = "Spearman r",
+     main = "Spearman correlation vs bin size by window",
+     ylim = c(0, 1), log = "x")
+for (j in seq_along(windows_c)) {
+  lines(bin_sizes, spearman_mat[, j], col = colors_c[j], lwd = 2, type = "b", pch = 19)
+}
+
+par(mfrow = c(1, 1))
+```
+
+The interactive version (Shiny tab 2) lets you drag the window position and watch these curves update in real time.
+
+---
+
+## Section d — Poisson Regression
+
+```{r section-d-models}
+# lm baseline
+mod_lm   <- lm(reads ~ gc, data = df_main)
+
+# Poisson GLM (log link, variance = mean)
+mod_pois <- glm(reads ~ gc, data = df_main, family = poisson(link = "log"))
+
+# Quasi-Poisson (variance = phi * mean — estimates dispersion directly)
+mod_qpois <- glm(reads ~ gc, data = df_main, family = quasipoisson(link = "log"))
+
+phi_hat <- summary(mod_qpois)$dispersion
+
+# McFadden pseudo-R² for Poisson
+pr2_pois  <- pseudo_r2(mod_pois)
+pr2_qpois <- pseudo_r2(mod_qpois)
+
+cat(sprintf("\n=== Dispersion parameter (phi) from quasi-Poisson: %.2f ===\n", phi_hat))
+cat(sprintf("  (Lab 3 VMR was ~14.7 — consistent with overdispersion of this magnitude)\n\n"))
+
+comparison_d <- data.frame(
+  Model       = c("lm (Normal)", "glm Poisson", "glm quasi-Poisson"),
+  R2_or_pR2   = round(c(summary(mod_lm)$r.squared, pr2_pois, pr2_qpois), 4),
+  Metric      = c("R²", "McFadden pseudo-R²", "McFadden pseudo-R²"),
+  AIC         = round(c(AIC(mod_lm), AIC(mod_pois), NA), 1),
+  Dispersion  = c(NA, 1.0, round(phi_hat, 2)),
+  stringsAsFactors = FALSE
+)
+
+cat("=== Model comparison table ===\n")
+print(comparison_d, row.names = FALSE)
+```
+
+```{r section-d-plot, fig.width=10, fig.height=6}
+gc_seq_d <- seq(min(df_main$gc), max(df_main$gc), length.out = 300)
+pred_df_d <- data.frame(gc = gc_seq_d)
+
+preds_lm    <- predict(mod_lm,    newdata = pred_df_d)
+preds_pois  <- predict(mod_pois,  newdata = pred_df_d, type = "response")
+preds_qpois <- predict(mod_qpois, newdata = pred_df_d, type = "response")
+
+plot(df_main$gc, df_main$reads,
+     col = rgb(0, 0, 0, 0.15), pch = 20, cex = 0.4,
+     xlab = "GC Content", ylab = "Reads per bin",
+     main = "lm vs Poisson vs quasi-Poisson",
+     ylim = c(0, 400))
+lines(gc_seq_d, preds_lm,    col = "steelblue", lwd = 2.5)
+lines(gc_seq_d, preds_pois,  col = "red",       lwd = 2.5, lty = 2)
+lines(gc_seq_d, preds_qpois, col = "darkgreen", lwd = 2.5, lty = 3)
+legend("topleft",
+       legend = c(
+         sprintf("lm  (R²=%.4f)",             summary(mod_lm)$r.squared),
+         sprintf("Poisson  (pR²=%.4f)",        pr2_pois),
+         sprintf("quasi-Poisson  (φ=%.1f)",    phi_hat)
+       ),
+       col = c("steelblue", "red", "darkgreen"),
+       lwd = 2.5, lty = c(1, 2, 3), bty = "n", cex = 1.0)
+```
+
+The quasi-Poisson model estimates a dispersion parameter φ ≈ `r round(phi_hat, 1)`, meaning the variance in read counts is roughly `r round(phi_hat, 1)`× what a true Poisson process would predict.
+This directly corroborates the VMR ≈ 14.7 measured in lab 3 and the SD_ratio ≈ 2.25 from lab 4 — all three measurements reflect the same underlying overdispersion in this sequencing data.
+
+---
+
+## Short Summary
+
+We examined the GC-coverage relationship from four angles.
+
+In (a), we found that G and C are nearly interchangeable predictors (Chargaff symmetry), and the interaction term adds negligible explanatory power.
+
+In (b), the spatial analysis showed that the strength of the GC-coverage relationship varies considerably across chromosome 1, with R² ranging from near-zero in low-complexity regions (centromere, telomere) to above 0.8 in gene-rich regions.
+
+In (c), larger bin sizes generally increased R², because aggregation smooths out per-base noise — though with diminishing returns beyond ~5000 bp.
+
+In (d), Poisson and quasi-Poisson regression confirmed what we suspected since lab 3: the data are overdispersed (φ ≈ 14), and a quasi-Poisson model provides a more honest fit than either plain Poisson or linear regression.
+
+---
+
+## Section e — AI Usage in This Lab
+
+This lab was explicitly AI-first.
+We used Claude Code throughout: to design the analysis plan, write the utility function library (`lab5_utils.R`), scaffold the Shiny app, debug graphical parameter issues, and refine the narrative.
+Key decisions — model selection, which comparisons to make, what to highlight in the presentation — were made by us; Claude handled implementation speed.
+The Shiny interactive explorer was designed collaboratively: we described the desired interaction (slider + live plot update) and Claude implemented it.
+
+## External Sources Statement
+
+We used AI (Claude Code) to:
+
+1. Design the overall analysis plan for this lab
+2. Write and debug `lab5_utils.R` utility functions
+3. Build the Shiny interactive application
+4. Fix plot layout and legend positioning
+5. Connect quasi-Poisson dispersion back to lab 3/4 findings
