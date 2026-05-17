@@ -59,8 +59,8 @@ cat(sprintf("Loaded %d bins | GC range: %.3f – %.3f | reads range: %d – %d\n
 
 ## Introduction
 
-Building on labs 3 and 4, this lab investigates the GC-coverage relationship in greater depth.
-We compare the predictive power of G, C, and G+C separately, examine whether the relationship holds consistently across chromosome 1, explore the effect of bin size on correlation strength, and fit Poisson regression models — motivated by the overdispersion we measured previously (VMR ≈ 14.7 in lab3, SD_ratio ≈ 2.25 in lab4).
+Building on labs 3 and 4, lab 5 investigates the GC-coverage relationship in greater depth.
+We compare the predictive power of G, C, and G+C separately, examine whether the relationship holds consistently across chromosome 1, explore the effect of bin size on correlation strength, and fit Poisson regression models - motivated by the overdispersion we measured previously (VMR ≈ 14.7 in lab3, SD_ratio ≈ 2.25 in lab4).
 
 ------------------------------------------------------------------------
 
@@ -147,6 +147,8 @@ model_compare <- do.call(rbind, lapply(seq_along(models_main), function(i) {
 print(model_compare)
 ```
 
+The 0.17 difference between the single bases and the shared content is significant and shows that there is a good reason to prefer the GC content over the individual bases.
+
 ```{r section-a-gcskew, fig.width=7, fig.height=6}
 set.seed(42)
 keep         <- sample(nrow(df_main), size = min(2000, nrow(df_main)))
@@ -226,6 +228,8 @@ text(125, 0.95, "centromere", col = "firebrick", cex = 1.2, adj = 0.5, font = 2)
 
 abline(h = seq(0.2, 0.8, by = 0.2), col = "gray80", lty = 2, lwd = 0.7)
 ```
+
+We can, generally, distinguish between the Centromere and the edges which have poor R^2^ scores,and\ the\ middle regions between them we classified as "gene-rich". the gene-rich areas reach around ~0.7 R\^2, while the gene-pooor areas perform as worse as ~0.3 R^2. in the gene-rich areas, the performance is more or less consistent. 
 
 ------------------------------------------------------------------------
 
