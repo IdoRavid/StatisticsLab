@@ -301,24 +301,31 @@ ui <- fluidPage(
       )
     ),
 
-    # ── Tab c: 3-D surface ───────────────────────────────────────────────────
-    tabPanel("c: Bin Size × Position Surface",
+    # ── Tab c: bin size explorer ─────────────────────────────────────────────
+    tabPanel("c: Bin Size Explorer",
       br(),
-      tags$p("R² of the GC–coverage linear fit across all chromosome positions and bin sizes.",
-             style = "color:#8888aa; margin-bottom:12px; font-style:italic;"),
       fluidRow(
-        column(12,
+        column(3,
           wellPanel(
-            plotlyOutput("plot_c_r2", height = "580px")
+            tags$h4("Window Position"),
+            sliderInput("pos_c", label = NULL,
+                        min     = 1,
+                        max     = floor((CHR1_LEN - WIN_SIZE) / 1e6),
+                        value   = 60,
+                        step    = 5,
+                        post    = " Mb",
+                        animate = animationOptions(interval = 700, loop = FALSE)),
+            tags$hr(style = "border-color:#363636; margin:16px 0;"),
+            tags$h5("Coverage profile — chr1"),
+            plotOutput("minimap_c",  height = "130px"),
+            tags$hr(style = "border-color:#363636; margin:12px 0;"),
+            tags$h5("R² across chromosome (5 kb bins)"),
+            plotOutput("r2_strip_c", height = "130px")
           )
-        )
-      ),
-      fluidRow(
-        column(12,
-          wellPanel(
-            tags$h5("Spearman correlation (same axes)", style = "color:#89b4fa; margin-top:0;"),
-            plotlyOutput("plot_c_sp", height = "420px")
-          )
+        ),
+        column(9,
+          plotOutput("plot_c_main",  height = "380px"),
+          plotOutput("plot_c_elbow", height = "260px")
         )
       )
     )
@@ -429,17 +436,10 @@ server <- function(input, output, session) {
     par(bg = BG, mar = c(2.2, 3, 0.4, 0.5),
         col.axis = "#666", col.lab = "#999", fg = GRID)
 
-    plot(POS_STEPS / 1e6, R2_BY_POS, type = "n",
+    plot(POS_STEPS / 1e6 + 5, R2_BY_POS, type = "p",
+         pch = 19, cex = 0.5, col = R2_COL,
          xlab = "Position (Mb)", ylab = "R²",
          ylim = c(0, 1), bty = "n", xaxt = "n", yaxt = "n")
-
-    # Fill: replace NA with 0 so polygon closes cleanly
-    r2_fill <- ifelse(is.na(R2_BY_POS), 0, R2_BY_POS)
-    polygon(c(POS_STEPS[1] / 1e6, POS_STEPS / 1e6, POS_STEPS[length(POS_STEPS)] / 1e6),
-            c(0, r2_fill, 0),
-            col = adjustcolor(R2_COL, alpha.f = 0.3), border = NA)
-    # Line: draw segments skipping NA gaps
-    lines(POS_STEPS / 1e6, R2_BY_POS, col = R2_COL, lwd = 1.5)
 
     rect(pos, 0, pos + WIN_SIZE / 1e6, 1,
          col = adjustcolor(WIN_COL, alpha.f = 0.18), border = NA)
@@ -500,61 +500,113 @@ server <- function(input, output, session) {
     )
   })
 
-  # ── 3-D surface: R² ─────────────────────────────────────────────────────────
-  surface_layout <- function(p, title_text, bar_title, bar_col) {
-    p %>% layout(
-      paper_bgcolor = "#1c1c1c",
-      font          = list(color = "#d4d4d4", family = "Georgia, serif"),
-      title         = list(text = title_text, font = list(color = "#e8e8e8", size = 14)),
-      scene = list(
-        bgcolor = "#1c1c1c",
-        xaxis   = list(title = "Bin size (log bp)",
-                       color = "#888", gridcolor = "#333", zerolinecolor = "#333"),
-        yaxis   = list(title = "Position (Mb)",
-                       color = "#888", gridcolor = "#333", zerolinecolor = "#333"),
-        zaxis   = list(title = "Score", range = c(0, 1),
-                       color = "#888", gridcolor = "#333", zerolinecolor = "#333"),
-        camera  = list(eye = list(x = 1.6, y = -1.4, z = 0.9))
-      ),
-      margin = list(l = 0, r = 0, t = 40, b = 0)
-    )
-  }
+  # ── Tab c reactives ──────────────────────────────────────────────────────────
+  pos_c <- debounce(reactive(input$pos_c), 150)
 
-  output$plot_c_r2 <- renderPlotly({
-    surface_layout(
-      plot_ly(
-        x = ~log10(BIN_SIZES),
-        y = ~(POS_STEPS / 1e6),
-        z = ~r2_mat,
-        type        = "surface",
-        colorscale  = list(c(0,"#161828"), c(0.25,"#1e2848"),
-                           c(0.5,"#2e4870"), c(0.75,"#7a9ec8"), c(1,"#e8d090")),
-        showscale   = TRUE,
-        colorbar    = list(title = "R²",
-                           tickfont  = list(color = "#8a95a8"),
-                           titlefont = list(color = "#b0c4de"))
-      ),
-      "R² — GC linear fit across chromosome × bin size", "R²", "#b0c4de"
-    )
+  BIN_SIZES_C <- c(1000L, 2000L, 5000L, 10000L, 20000L, 50000L, 100000L, 250000L, 500000L)
+  BIN_LABELS  <- c("1k", "2k", "5k", "10k", "20k", "50k", "100k", "250k", "500k")
+
+  # Compute R² and Spearman for all bin sizes for current window on-the-fly
+  metrics_c <- reactive({
+    beg_w <- pos_c() * 1e6
+    end_w <- beg_w + WIN_SIZE - 1L
+    r2v <- numeric(length(BIN_SIZES_C))
+    spv <- numeric(length(BIN_SIZES_C))
+    for (k in seq_along(BIN_SIZES_C)) {
+      df_w <- bin_data_fast(beg_w, end_w, BIN_SIZES_C[k])
+      if (nrow(df_w) < 5 || var(df_w$gc) < 1e-10) { r2v[k] <- NA; spv[k] <- NA; next }
+      m <- lm(reads ~ gc, data = df_w)
+      r2v[k] <- summary(m)$r.squared
+      spv[k] <- cor(df_w$gc, df_w$reads, method = "spearman")
+    }
+    list(r2 = r2v, sp = spv)
   })
 
-  output$plot_c_sp <- renderPlotly({
-    surface_layout(
-      plot_ly(
-        x = ~log10(BIN_SIZES),
-        y = ~(POS_STEPS / 1e6),
-        z = ~sp_mat,
-        type        = "surface",
-        colorscale  = list(c(0,"#161828"), c(0.25,"#1e2848"),
-                           c(0.5,"#3a4860"), c(0.75,"#8a9ab8"), c(1,"#c8a86a")),
-        showscale   = TRUE,
-        colorbar    = list(title = "Spearman r",
-                           tickfont  = list(color = "#8a95a8"),
-                           titlefont = list(color = "#c8a86a"))
-      ),
-      "Spearman r — GC rank correlation across chromosome × bin size", "r", "#c8a86a"
-    )
-  })
+  output$plot_c_main <- renderPlot({
+    pos  <- pos_c()
+    m    <- metrics_c()
+    r2v  <- m$r2
+    spv  <- m$sp
+
+    par(bg = "#1c1c1c", col.axis = "#999", col.lab = "#cccccc",
+        col.main = "#e8e8e8", fg = "#444",
+        mfrow = c(1, 2), mar = c(5, 4.5, 3, 1),
+        cex.main = 1.2, cex.lab = 1.1, cex.axis = 0.95)
+
+    # R² panel
+    plot(BIN_SIZES_C, r2v, type = "b", pch = 19, lwd = 2.5, col = "#7a9ec8",
+         xlab = "Bin size (bp)", ylab = "R²",
+         main = sprintf("R² vs bin size  —  window %d–%d Mb", pos, pos + 10),
+         ylim = c(0, 1), log = "x", xaxt = "n")
+    axis(1, at = BIN_SIZES_C, labels = BIN_LABELS, col.axis = "#999", cex.axis = 0.8, las = 2)
+    abline(h = seq(0.2, 0.8, by = 0.2), col = "#2a2a2a", lty = 1)
+
+    # Spearman panel
+    plot(BIN_SIZES_C, spv, type = "b", pch = 19, lwd = 2.5, col = "#c8a86a",
+         xlab = "Bin size (bp)", ylab = "Spearman r",
+         main = sprintf("Spearman r vs bin size  —  window %d–%d Mb", pos, pos + 10),
+         ylim = c(0, 1), log = "x", xaxt = "n")
+    axis(1, at = BIN_SIZES_C, labels = BIN_LABELS, col.axis = "#999", cex.axis = 0.8, las = 2)
+    abline(h = seq(0.2, 0.8, by = 0.2), col = "#2a2a2a", lty = 1)
+  }, bg = "#1c1c1c")
+
+  output$plot_c_elbow <- renderPlot({
+    r2v  <- metrics_c()$r2
+    d1   <- diff(r2v)
+    total_gain <- sum(d1, na.rm = TRUE)
+
+    if (is.na(total_gain) || total_gain == 0) {
+      par(bg = "#1c1c1c"); plot.new()
+      mtext("Insufficient signal for elbow analysis", col = "#888"); return()
+    }
+
+    pct  <- d1 / total_gain * 100
+    cols <- ifelse(pct < 5, "firebrick", "#4DAF4A")
+
+    par(bg = "#1c1c1c", col.axis = "#999", col.lab = "#cccccc",
+        col.main = "#e8e8e8", fg = "#444",
+        mar = c(5, 4.5, 3, 1), cex.main = 1.1, cex.lab = 1.0, cex.axis = 0.9)
+
+    barplot(pct, names.arg = BIN_LABELS[-1], col = cols, border = NA, las = 2,
+            xlab = "Bin size step", ylab = "% of total R² gain",
+            main = "Marginal R² gain per step  (green = meaningful, red = diminishing returns)",
+            las = 2, ylim = c(0, max(pct, 10, na.rm = TRUE) * 1.15))
+    abline(h = 5, col = "#888", lty = 2, lwd = 1.5)
+    mtext("5% threshold", side = 4, at = 5, col = "#888", cex = 0.8, las = 1, line = 0.3)
+  }, bg = "#1c1c1c")
+
+  # ── Tab c minimaps (reuse same style as tab b) ──────────────────────────────
+  output$minimap_c <- renderPlot({
+    pos     <- pos_c()
+    BG      <- "#1c1c1c"; COV_COL <- "#7a9ec8"; WIN_COL <- "#c8a86a"; GRID <- "#333333"
+    cov_cap <- quantile(COV_MINIMAP, 0.995)
+    cov_y   <- pmin(COV_MINIMAP, cov_cap)
+    par(bg = BG, mar = c(2.2, 3, 0.4, 0.5), col.axis = "#666", col.lab = "#999", fg = GRID)
+    plot(MM_POS_MB, cov_y, type = "n", xlab = "Position (Mb)", ylab = "Reads",
+         ylim = c(0, cov_cap), bty = "n", xaxt = "n", yaxt = "n")
+    polygon(c(MM_POS_MB[1], MM_POS_MB, MM_POS_MB[length(MM_POS_MB)]),
+            c(0, cov_y, 0), col = adjustcolor(COV_COL, alpha.f = 0.4), border = NA)
+    lines(MM_POS_MB, cov_y, col = COV_COL, lwd = 1)
+    rect(pos, 0, pos + WIN_SIZE / 1e6, cov_cap,
+         col = adjustcolor(WIN_COL, alpha.f = 0.18), border = NA)
+    abline(v = c(pos, pos + WIN_SIZE / 1e6), col = WIN_COL, lwd = 1.5)
+    axis(1, col = GRID, col.axis = "#666", cex.axis = 0.65, tcl = -0.2, lwd = 0.5)
+  }, bg = "#1c1c1c")
+
+  output$r2_strip_c <- renderPlot({
+    pos     <- pos_c()
+    BG      <- "#1c1c1c"; R2_COL <- "#7a9ec8"; WIN_COL <- "#c8a86a"; GRID <- "#333333"
+    par(bg = BG, mar = c(2.2, 3, 0.4, 0.5), col.axis = "#666", col.lab = "#999", fg = GRID)
+    plot(POS_STEPS / 1e6 + 5, R2_BY_POS, type = "p", pch = 19, cex = 0.5, col = R2_COL,
+         xlab = "Position (Mb)", ylab = "R²", ylim = c(0, 1),
+         bty = "n", xaxt = "n", yaxt = "n")
+    rect(pos, 0, pos + WIN_SIZE / 1e6, 1,
+         col = adjustcolor(WIN_COL, alpha.f = 0.18), border = NA)
+    abline(v = c(pos, pos + WIN_SIZE / 1e6), col = WIN_COL, lwd = 1.5)
+    axis(1, col = GRID, col.axis = "#666", cex.axis = 0.65, tcl = -0.2, lwd = 0.5)
+    axis(2, at = c(0, 0.5, 1), col = GRID, col.axis = "#666",
+         cex.axis = 0.65, tcl = -0.2, lwd = 0.5)
+  }, bg = "#1c1c1c")
 }
 
-shinyApp(ui = ui, server = server)
+shinyApp(ui = ui, server = server, options = list(port = 3838, launch.browser = TRUE))

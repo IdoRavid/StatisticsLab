@@ -43,6 +43,7 @@ end_region <- 100000000
 ### Reading the Data
 
 ```{r load-data, cache=TRUE}
+source("../utils.R")
 source("lab5_utils.R")
 
 chr1_reads <- fread(reads_file, col.names = c("Chr", "Loc", "Length"))
@@ -96,6 +97,7 @@ coef_table <- do.call(rbind, lapply(seq_along(models_a), function(i) {
 cat("\n=== Model comparison: R² and coefficients ===\n")
 print(coef_table, row.names = FALSE)
 ```
+
 ```{r code}
 models_main <- list(
   mod_g,
@@ -145,105 +147,195 @@ model_compare <- do.call(rbind, lapply(seq_along(models_main), function(i) {
 print(model_compare)
 ```
 
+```{r section-a-gcskew, fig.width=7, fig.height=6}
+set.seed(42)
+keep         <- sample(nrow(df_main), size = min(2000, nrow(df_main)))
+df_sub       <- df_main[keep, ]
+ord          <- order(df_sub$reads)
+reads_sorted <- df_sub$reads[ord]
+reads_scaled <- (reads_sorted - min(reads_sorted)) / diff(range(reads_sorted))
+pal          <- colorRampPalette(c("#440154", "#21908C", "#FDE725"))(100)
+point_cols   <- pal[pmax(1, ceiling(reads_scaled * 100))]
 
-In double-stranded DNA, G pairs with C (Chargaff's rules), so their proportions track each other closely along the chromosome.
-We would therefore expect the `~G` and `~C` models to perform nearly identically, and we should see that adding the interaction term in `~G+C+G×C` adds little beyond `~G+C`.
+plot(df_sub$g_prop[ord], df_sub$c_prop[ord],
+     col  = point_cols, pch = 20, cex = 0.8,
+     xlab = "G content per bin",
+     ylab = "C content per bin",
+     main = "GC Skew: G% vs C% (color = read depth)",
+     xlim = c(0, 0.4), ylim = c(0, 0.4))
+
+abline(a = 0, b = 1, col = "black", lwd = 2, lty = 2)
+
+mid_x <- mean(par("usr")[1:2])
+
+# Gradient colorbar — bottom right
+usr <- par("usr")
+bar_x0 <- usr[2] - 0.055; bar_x1 <- usr[2] - 0.005
+bar_y0 <- usr[3] + 0.005; bar_y1 <- usr[3] + 0.07
+n_seg <- 50
+ys <- seq(bar_y0, bar_y1, length.out = n_seg + 1)
+bar_pal <- colorRampPalette(c("#440154", "#21908C", "#FDE725"))(n_seg)
+for (k in seq_len(n_seg))
+  rect(bar_x0, ys[k], bar_x1, ys[k+1], col = bar_pal[k], border = NA)
+rect(bar_x0, bar_y0, bar_x1, bar_y1, border = "black", lwd = 0.7)
+text(bar_x0 - 0.002, bar_y0, "Low\nreads",  adj = c(1, 0),   cex = 0.72)
+text(bar_x0 - 0.002, bar_y1, "High\nreads", adj = c(1, 1),   cex = 0.72)
+```
+
+The second graph is our attempt to further explain the difference in explainability.
+The cloud follows the Chargaff diagonal (G% ≈ C% globally), but notably fans out at higher GC values.
+Low-GC bins (purple, low reads) sit tightly on the diagonal — G and C are nearly interchangeable there.
+High-GC bins (yellow, high reads) spread away from it: local G% and C% diverge due to transcription-coupled strand asymmetry in gene-rich regions.
+This means C carries **independent coverage signal precisely where coverage is highest** — which is why `~G+C` outperforms `~G` alone despite Chargaff.
 
 ------------------------------------------------------------------------
 
 ## Section b — Is the relationship spatially consistent? (Shiny)
 
-The static plot below shows spline fits in 6 equally-spaced 10 Mb windows across the chromosome.
-Run `shiny::runApp("shiny_app")` for the interactive version.
+The plot below shows spline model R² (for model1 from lab4) as a function of genomic position across the full chromosome.
+Run `shiny::runApp("shiny_app")` for the interactive version with a live slider.
 
-```{r section-b-static, fig.width=12, fig.height=7, cache=TRUE}
+```{r section-b-static, fig.width=12, fig.height=5, cache=TRUE}
 chr1_len    <- nchar(chr1)
 window_size <- 10000000  # 10 Mb
-starts      <- seq(1, chr1_len - window_size, by = floor((chr1_len - window_size) / 5))[1:6]
+step_size   <- 5000000   # 5 Mb steps
+pos_steps   <- seq(1, chr1_len - window_size, by = step_size)
 
-colors_b <- c("#E41A1C","#377EB8","#4DAF4A","#984EA3","#FF7F00","#A65628")
-
-# Use the first window's range to set axes
-df_ref <- bin_data(chr1_reads, chr1, starts[1], starts[1] + window_size - 1, BIN_SIZE)
-
-plot(df_ref$gc, df_ref$reads,
-     col = rgb(0, 0, 0, 0), pch = 20, cex = 0,   # invisible — just sets axes
-     xlab = "GC Content", ylab = "Reads per bin",
-     main = "Spline fits in 6 windows across chromosome 1",
-     ylim = c(0, 400), xlim = c(0.3, 0.7))
-
-r2_vals <- numeric(6)
-for (i in seq_along(starts)) {
-  beg_w <- starts[i]
-  end_w <- beg_w + window_size - 1
-  df_w  <- bin_data(chr1_reads, chr1, beg_w, end_w, BIN_SIZE)
-
+r2_profile <- sapply(pos_steps, function(beg_w) {
+  df_w <- bin_data(chr1_reads, chr1, beg_w, beg_w + window_size - 1, BIN_SIZE)
+  if (nrow(df_w) < 20 || var(df_w$gc) < 1e-10) return(NA)
   knots_w <- quantile(df_w$gc, probs = c(0.25, 0.5, 0.75))
   fit_w   <- lm(reads ~ bs(gc, knots = knots_w, degree = 3), data = df_w)
-  r2_vals[i] <- round(summary(fit_w)$r.squared, 3)
+  summary(fit_w)$r.squared
+})
 
-  gc_seq  <- seq(min(df_w$gc), max(df_w$gc), length.out = 300)
-  preds_w <- predict(fit_w, newdata = data.frame(gc = gc_seq))
-  lines(gc_seq, preds_w, col = colors_b[i], lwd = 2.5)
-}
+pos_mb <- pos_steps / 1e6
 
-legend("topleft",
-       legend = sprintf("%.0f–%.0f Mb  R²=%.3f",
-                        starts / 1e6, (starts + window_size) / 1e6, r2_vals),
-       col = colors_b, lwd = 2.5, cex = 0.85, bty = "n")
+plot(pos_mb + 5, r2_profile,
+     type = "p", pch = 19, cex = 0.9, col = "steelblue",
+     xlim = c(0, chr1_len / 1e6), ylim = c(0, 1),
+     xlab = "Chromosome 1 position (Mb)", ylab = "R²  (spline fit, 10 Mb window)",
+     main = "GC–coverage model fit across chromosome 1",
+     xaxs = "i")
+
+# Outer band: windows that partially overlap the centromere (~10 Mb buffer each side)
+rect(110, 0, 140, 1, col = adjustcolor("firebrick", alpha.f = 0.08), border = NA)
+# Core centromere
+rect(120, 0, 130, 1, col = adjustcolor("firebrick", alpha.f = 0.20), border = NA)
+text(125, 0.95, "centromere", col = "firebrick", cex = 1.2, adj = 0.5, font = 2)
+
+abline(h = seq(0.2, 0.8, by = 0.2), col = "gray80", lty = 2, lwd = 0.7)
 ```
 
 ------------------------------------------------------------------------
 
 ## Section c — Which bin size gives the strongest relationship?
 
-```{r section-c-static, fig.width=10, fig.height=6, cache=TRUE}
-bin_sizes <- c(1000, 2000, 5000, 10000, 20000)
-windows_c <- seq(50000000, 90000000, by = 10000000)  # 5 windows
-colors_c  <- c("#E41A1C","#377EB8","#4DAF4A","#984EA3","#FF7F00")
+```{r section-c-static, fig.width=13, fig.height=6, cache=TRUE}
+bin_sizes_c <- c(500, 1000, 2000, 5000, 10000, 20000, 50000, 100000, 250000, 500000)
 
-r2_mat      <- matrix(NA, nrow = length(bin_sizes), ncol = length(windows_c))
-spearman_mat <- matrix(NA, nrow = length(bin_sizes), ncol = length(windows_c))
+windows_c <- list(
+  list(beg = 5000000,   end = 25000000,  label = "Edge  (5–25 Mb)",         col = "#377EB8"),
+  list(beg = 60000000,  end = 80000000,  label = "Gene-rich  (60–80 Mb)",   col = "#4DAF4A"),
+  list(beg = 115000000, end = 135000000, label = "Centromere  (115–135 Mb)", col = "#E41A1C")
+)
+
+r2_all <- matrix(NA, nrow = length(bin_sizes_c), ncol = length(windows_c))
+sp_all <- matrix(NA, nrow = length(bin_sizes_c), ncol = length(windows_c))
 
 for (j in seq_along(windows_c)) {
-  beg_w <- windows_c[j]
-  end_w <- beg_w + 9999999
-  for (k in seq_along(bin_sizes)) {
-    df_w <- bin_data(chr1_reads, chr1, beg_w, end_w, bin_sizes[k])
-    if (nrow(df_w) < 10) next
-    mod_w <- lm(reads ~ gc, data = df_w)
-    r2_mat[k, j]       <- summary(mod_w)$r.squared
-    spearman_mat[k, j] <- spearman_r(df_w$gc, df_w$reads)
+  for (k in seq_along(bin_sizes_c)) {
+    df_w <- bin_data(chr1_reads, chr1, windows_c[[j]]$beg, windows_c[[j]]$end, bin_sizes_c[k])
+    if (nrow(df_w) < 5 || var(df_w$gc) < 1e-10) next
+    mod_w        <- lm(reads ~ gc, data = df_w)
+    r2_all[k, j] <- summary(mod_w)$r.squared
+    sp_all[k, j] <- spearman_r(df_w$gc, df_w$reads)
   }
 }
 
-par(mfrow = c(1, 2), mar = c(5, 4, 3, 1))
+x_labels <- c("500", "1k", "2k", "5k", "10k", "20k", "50k", "100k", "250k", "500k")
 
-# R² plot
-plot(bin_sizes, r2_mat[, 1], type = "n",
+# Elbow: first bin where marginal R² gain drops below 5% of total gain (gene-rich region)
+r2_gene   <- r2_all[, 2]
+d1        <- diff(r2_gene)
+total_gain <- sum(d1, na.rm = TRUE)
+pct_gains  <- d1 / total_gain
+elbow_idx  <- which(pct_gains < 0.05)[1]  # index into d1; corresponds to bin_sizes_c[elbow_idx+1]
+elbow_x    <- bin_sizes_c[elbow_idx + 1]
+
+par(mfrow = c(1, 2), mar = c(5, 4.5, 3, 1))
+
+# R² panel
+plot(NULL, xlim = range(bin_sizes_c), ylim = c(0, 1), log = "x",
      xlab = "Bin size (bp)", ylab = "R²",
-     main = "R² vs bin size by window",
-     ylim = c(0, 1), log = "x")
-for (j in seq_along(windows_c)) {
-  lines(bin_sizes, r2_mat[, j], col = colors_c[j], lwd = 2, type = "b", pch = 19)
-}
+     main = "R² vs bin size — three genomic regions",
+     xaxt = "n")
+axis(1, at = bin_sizes_c, labels = x_labels, cex.axis = 0.8)
+abline(h = seq(0.2, 0.8, by = 0.2), col = "gray85", lty = 2, lwd = 0.7)
+if (!is.na(elbow_x))
+  abline(v = elbow_x, col = "gray40", lty = 3, lwd = 1.5)
+for (j in seq_along(windows_c))
+  lines(bin_sizes_c, r2_all[, j], type = "b", pch = 19, lwd = 2,
+        col = windows_c[[j]]$col)
+if (!is.na(elbow_x))
+  text(elbow_x, 0.08, sprintf("elbow\n%s", x_labels[elbow_idx]),
+       col = "gray40", cex = 0.75, adj = c(-0.1, 0))
 legend("topleft",
-       legend = sprintf("%.0f–%.0f Mb", windows_c/1e6, (windows_c+1e7)/1e6),
-       col = colors_c, lwd = 2, cex = 0.8, bty = "n")
+       legend = sapply(windows_c, `[[`, "label"),
+       col    = sapply(windows_c, `[[`, "col"),
+       lwd = 2, pch = 19, bty = "n", cex = 0.85)
 
-# Spearman plot
-plot(bin_sizes, spearman_mat[, 1], type = "n",
+# Spearman panel
+plot(NULL, xlim = range(bin_sizes_c), ylim = c(0, 1), log = "x",
      xlab = "Bin size (bp)", ylab = "Spearman r",
-     main = "Spearman correlation vs bin size by window",
-     ylim = c(0, 1), log = "x")
-for (j in seq_along(windows_c)) {
-  lines(bin_sizes, spearman_mat[, j], col = colors_c[j], lwd = 2, type = "b", pch = 19)
-}
+     main = "Spearman r vs bin size\nthree genomic regions",
+     xaxt = "n")
+axis(1, at = bin_sizes_c, labels = x_labels, cex.axis = 0.8)
+abline(h = seq(0.2, 0.8, by = 0.2), col = "gray85", lty = 2, lwd = 0.7)
+if (!is.na(elbow_x))
+  abline(v = elbow_x, col = "gray40", lty = 3, lwd = 1.5)
+for (j in seq_along(windows_c))
+  lines(bin_sizes_c, sp_all[, j], type = "b", pch = 19, lwd = 2,
+        col = windows_c[[j]]$col)
 
 par(mfrow = c(1, 1))
 ```
 
-The interactive version (Shiny tab 2) lets you drag the window position and watch these curves update in real time.
+All three regions show the same qualitative trend — R² and Spearman increase with bin size as aggregation smooths per-base noise.
+The curves are vertically separated: the gene-rich region (green) sits consistently highest, the edge region (blue) is intermediate, and the centromere (red) has R² near zero regardless of bin size.
+
+The Spearman panel reveals an important nuance: the centromere scores \~0.95 Spearman despite R² ≈ 0.
+This is because Spearman only checks whether rank order is preserved — and in the centromere, the tiny fluctuations that exist happen to be consistent in rank.
+But coverage is near-zero throughout, so there is no real signal to explain.
+R² correctly reflects this; Spearman is misleading here.
+
+```{r section-c-elbow, fig.width=6, fig.height=5}
+bar_cols <- ifelse(pct_gains * 100 < 5, "firebrick", "#4DAF4A")
+bar_labels <- x_labels[2:length(x_labels)]  # labels for transition points
+
+barplot(pct_gains * 100,
+        names.arg = bar_labels,
+        col       = bar_cols,
+        border    = NA,
+        xlab      = "Bin size step (bp)",
+        ylab      = "% of total R² gain",
+        main      = "Marginal R² gain per bin size step\n(gene-rich region)",
+        las       = 2,
+        cex.names = 0.8)
+abline(h = 5, col = "gray30", lty = 2, lwd = 1.5)
+text(par("usr")[2], 5.5, "5% threshold", adj = 1, cex = 0.8, col = "gray30")
+```
+
+The bar chart shows what fraction of the total R² gain is contributed by each bin size step in the gene-rich region.
+Green bars are steps that contribute meaningfully (≥5% of total gain); red bars fall below the threshold and represent diminishing returns.
+The dashed line at 5% is the stopping criterion — once marginal gains drop below it, increasing bin size costs spatial resolution without meaningfully improving the model.
+
+However, the statistical argument alone is not sufficient.
+A 100 kb bin may satisfy the threshold, but it would swallow entire genes in a single bin — making it impossible to connect coverage signal back to any specific genomic feature.
+Human genes are typically 10–100 kb long, and GC-rich regulatory elements such as CpG islands are only 0.5–2 kb.
+At 5 kb bins, we get enough resolution to detect GC variation *within* genes, distinguish neighboring genes with different GC content, and partially capture CpG island signal — while still having enough reads per bin for stable estimates.
+The optimal bin size is therefore bracketed by two constraints: the statistical elbow from above, and the scale of biologically meaningful features from below.
+5 kb sits in the middle of that window.
 
 ------------------------------------------------------------------------
 
