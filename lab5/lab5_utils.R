@@ -1,4 +1,4 @@
-source("../utils.R")
+# utils.R is sourced by the caller (lab5.Rmd or app.R) before this file
 
 # Bin reads and compute GC, G, C proportions for a genomic region.
 # Returns a data.frame with columns: reads, gc, g_prop, c_prop
