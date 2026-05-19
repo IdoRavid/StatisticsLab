@@ -1,0 +1,133 @@
+---
+title: "HW6"
+author: "Group 12 - Shir, Omer & Ido"
+date: "26/05/26"
+output:
+  pdf_document:
+    latex_engine: xelatex
+    extra_dependencies: ["fvextra"]
+  html_document:
+    code_folding: show
+header-includes:
+  - \DefineVerbatimEnvironment{Highlighting}{Verbatim}{breaklines,commandchars=\\\{\}}
+editor_options:
+  markdown:
+    wrap: sentence
+---
+
+### Group:
+
+Group members (Name, ID, email)
+
+-   Ido Ravid, 207198177, ido.ravid\@mail.huji.ac.il
+
+-   Omer Sutovsky, 318735107 ,omer.sutovsky\@mail.huji.ac.il
+
+-   Shir Tsarfaty, 207718008, shir.tsarfaty\@mail.huji.ac.il
+
+
+### Paths and Data
+
+
+```{r paths_and_data}
+# 1. Loading necessary libraries
+if (!require('data.table')) { install.packages('data.table'); library('data.table') }
+if (!require('splines'))    { install.packages('splines');    library('splines') }
+
+# 2. Sourcing utilities - going up one level from lab6 to StatisticsLab
+source("../utils.R")
+
+# 3. File Paths - Updated to match YOUR folder structure exactly
+# Note: I used the 'lib2' file since that's what you have in lab6 right now
+reads_file  <- "TCGA-13-0723-10B_lib2_all_chr1.forward" 
+chr1_file   <- "../lab1/data/chr1_str.rda"
+
+# 4. Global Variables
+BIN_SIZE    <- 2500
+beg_region  <- 50000000 
+end_region  <- 100000000 
+
+# 5. Loading and Binning
+if (!file.exists(reads_file)) stop("File not found in lab6 folder!")
+chr1_reads <- fread(reads_file, col.names = c("Chr", "Loc", "Length"))
+load(chr1_file)
+
+# Creating the dataset using the utility function [cite: 62]
+df_main <- bin_data(chr1_reads, chr1, beg_region, end_region, BIN_SIZE)
+
+cat(sprintf("Loaded %d bins | GC range: %.3f-%.3f\n", 
+            nrow(df_main), min(df_main$gc), max(df_main$gc)))
+```
+
+## Introduction
+
+In this lab we are Building on our previous analysis of the GC-bias, we are now moving to estimate the genomic Copy Number. For this lab, we use a healthy tissue sample as our baseline. In healthy cells, we expect the copy number to be stable and close to 1, allowing us to establish a normal reference before eventually analyzing cancerous samples.
+
+## Q1
+```{r}
+# Section 1: Function to estimate genomic copy number
+estimate_copy_number <- function(reads_vec, gc_vec, fit_model) {
+  # Predict expected coverage based on the GC spline model
+  f_hat <- predict(fit_model, newdata = data.frame(gc = gc_vec))
+  
+  # Raw estimate: the ratio between observed and expected
+  a_tilde <- reads_vec / f_hat
+  
+  # Normalize so the median equals 1 (baseline for healthy tissue)
+  m_hat <- 1 / median(a_tilde, na.rm = TRUE)
+  return(a_tilde * m_hat)
+}
+```
+To extract the copy number, we divide the observed reads by the expected coverage predicted by our GC model. We also apply a normalization constant to ensure the median of our estimates is exactly 1, aligning the data with our healthy baseline.
+
+#Q2
+```{r}
+# 1. Fit the Spline Model (from Lab 5) 
+# We need this model to predict the expected coverage based on GC
+library(splines)
+mod_gc_sum <- lm(reads ~ bs(gc, knots = quantile(df_main$gc, probs = c(0.25, 0.5, 0.75))), data = df_main)
+
+# 2. Select the 1000 consecutive bins
+df_sample <- df_main[1:1000, ]
+
+# 3. Estimate Copy Number
+# Now 'mod_gc_sum' exists and the function will work
+df_sample$a_hat <- estimate_copy_number(df_sample$reads, df_sample$gc, mod_gc_sum)
+
+# 4. Numerical measure: How close are we to 1?
+mae_cn <- mean(abs(df_sample$a_hat - 1))
+cat(sprintf("Average distance from baseline (1.0): %.4f\n", mae_cn))
+
+# 5. Plotting the results
+par(mfrow = c(1, 2))
+hist(df_sample$a_hat, breaks = 30, col = "gray90", border = "white",
+     main = "Marginal Distribution", xlab = "Estimated CN")
+abline(v = 1, col = "red", lwd = 2, lty = 2)
+
+plot(df_sample$a_hat, type = "l", col = "steelblue",
+     main = "CN across Position", xlab = "Bin Index", ylab = "a_hat")
+abline(h = 1, col = "red", lty = 2)
+```
+2a: Visualizing the Estimates, The plots show that we successfully removed the GC bias. The histogram is centered around 1, which is exactly what we expect for a healthy sample. Looking at the spatial plot, the estimates are stable without any major jumps, confirming that the copy number is uniform across this genomic region.  
+2b: Measuring the MAE of about 0.15 means that, on average, each bin deviates from the baseline by 15\%. This deviation represents the residual noise left in our model: a mix of random sampling variation and other minor technical factors.   
+
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r cars}
+summary(cars)
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
