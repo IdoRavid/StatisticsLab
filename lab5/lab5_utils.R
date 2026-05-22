@@ -86,3 +86,11 @@ pseudo_r2 <- function(mod) {
   null_mod <- update(mod, . ~ 1)
   1 - as.numeric(logLik(mod)) / as.numeric(logLik(null_mod))
 }
+
+# Fit the standard lab-4 GC-coverage spline on a binned data frame.
+# df must have columns 'reads' and 'gc' (as produced by bin_data).
+# Bin size is implicit — df should already be binned at the desired resolution.
+fit_gc_spline <- function(df, knot_probs = c(0.25, 0.5, 0.75), degree = 3) {
+  knots <- quantile(df$gc, probs = knot_probs)
+  lm(reads ~ bs(gc, knots = knots, degree = degree), data = df)
+}

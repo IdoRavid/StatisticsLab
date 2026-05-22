@@ -25,34 +25,26 @@ Group members (Name, ID, email)
 
 -   Shir Tsarfaty, 207718008, shir.tsarfaty\@mail.huji.ac.il
 
-
 ### Paths and Data
 
-
 ```{r paths_and_data}
-# 1. Loading necessary libraries
 if (!require('data.table')) { install.packages('data.table'); library('data.table') }
 if (!require('splines'))    { install.packages('splines');    library('splines') }
 
-# 2. Sourcing utilities - going up one level from lab6 to StatisticsLab
 source("../utils.R")
+source("../lab5/lab5_utils.R")
 
-# 3. File Paths - Updated to match YOUR folder structure exactly
-# Note: I used the 'lib2' file since that's what you have in lab6 right now
-reads_file  <- "TCGA-13-0723-10B_lib2_all_chr1.forward" 
+reads_file  <- "../lab2/data/TCGA-13-0723-10B_lib2_all_chr1.forward"
 chr1_file   <- "../lab1/data/chr1_str.rda"
 
-# 4. Global Variables
 BIN_SIZE    <- 2500
 beg_region  <- 50000000 
 end_region  <- 100000000 
 
-# 5. Loading and Binning
-if (!file.exists(reads_file)) stop("File not found in lab6 folder!")
+if (!file.exists(reads_file)) stop("File not found")
 chr1_reads <- fread(reads_file, col.names = c("Chr", "Loc", "Length"))
 load(chr1_file)
 
-# Creating the dataset using the utility function [cite: 62]
 df_main <- bin_data(chr1_reads, chr1, beg_region, end_region, BIN_SIZE)
 
 cat(sprintf("Loaded %d bins | GC range: %.3f-%.3f\n", 
@@ -61,73 +53,141 @@ cat(sprintf("Loaded %d bins | GC range: %.3f-%.3f\n",
 
 ## Introduction
 
-In this lab we are Building on our previous analysis of the GC-bias, we are now moving to estimate the genomic Copy Number. For this lab, we use a healthy tissue sample as our baseline. In healthy cells, we expect the copy number to be stable and close to 1, allowing us to establish a normal reference before eventually analyzing cancerous samples.
+Lab 6 moves away from exploring the GC content \~ Reads phenomena, and utilizes the regression function we created in previous labs to investigate the goal we set out in the beginning of the semester - estimating the genomic copy number.
+As we've learned in class, the genomic copy number is itself an indicator of possible mutations that has biological value, but is effected by additional technical effects.
+Now that we've modeled the GC effect, we can try to estimate the distribution using our assumed model:
 
-## Q1
+$$Y_i \sim \text{Pois}\left(a_i \cdot f(gc_i) + \epsilon_i\right)$$
+
+For this lab, we use a healthy tissue sample as our baseline.
+In healthy cells, we expect the copy number to be stable and close to 1, allowing us to establish a normal reference before eventually analyzing cancerous samples.
+
+### Question 1
+
 ```{r}
-# Section 1: Function to estimate genomic copy number
 estimate_copy_number <- function(reads_vec, gc_vec, fit_model) {
-  # Predict expected coverage based on the GC spline model
+  # Predict expected coverage based on the GC spline model from lab4
   f_hat <- predict(fit_model, newdata = data.frame(gc = gc_vec))
   
   # Raw estimate: the ratio between observed and expected
   a_tilde <- reads_vec / f_hat
   
-  # Normalize so the median equals 1 (baseline for healthy tissue)
+  # Normalize so the median equals 1 (the idenitifiablity assumption we had in class)
   m_hat <- 1 / median(a_tilde, na.rm = TRUE)
   return(a_tilde * m_hat)
 }
 ```
-To extract the copy number, we divide the observed reads by the expected coverage predicted by our GC model. We also apply a normalization constant to ensure the median of our estimates is exactly 1, aligning the data with our healthy baseline.
 
-#Q2
-```{r}
-# 1. Fit the Spline Model (from Lab 5) 
-# We need this model to predict the expected coverage based on GC
-library(splines)
-mod_gc_sum <- lm(reads ~ bs(gc, knots = quantile(df_main$gc, probs = c(0.25, 0.5, 0.75))), data = df_main)
+To extract the copy number, we use the plug-in estimator presented in class:
 
-# 2. Select the 1000 consecutive bins
-df_sample <- df_main[1:1000, ]
+$$\tilde{a}_k = \frac{y_k}{\hat{f}(gc_k)} \cdot \hat{M}$$
 
-# 3. Estimate Copy Number
-# Now 'mod_gc_sum' exists and the function will work
-df_sample$a_hat <- estimate_copy_number(df_sample$reads, df_sample$gc, mod_gc_sum)
+We also apply a normalization constant to ensure the median of our estimates is exactly 1 in order to align the data with the normalized baseline:
 
-# 4. Numerical measure: How close are we to 1?
+$$\hat{M} = \frac{1}{\text{med}_k\{\tilde{a}_k\}}$$
+
+### Question 2
+
+```{r, fig.height=9}
+# fit GC-coverage spline (lab 4 model) with BIN_SIZE=2500
+mod_spline <- fit_gc_spline(df_main)
+
+# apply estimator to 1000 consecutive bins from the gene-rich region (61.25–63.75 Mb) we saw in lab5
+df_sample <- df_main[4501:5500, ]
+df_sample$a_hat <- estimate_copy_number(df_sample$reads, df_sample$gc, mod_spline)
+
+# measure MAE from the healthy baseline of 1
 mae_cn <- mean(abs(df_sample$a_hat - 1))
-cat(sprintf("Average distance from baseline (1.0): %.4f\n", mae_cn))
+cat(sprintf("MAE from baseline: %.4f\n", mae_cn))
 
-# 5. Plotting the results
-par(mfrow = c(1, 2))
+# visualize: marginal distribution and estimators along region
+par(mfrow = c(2, 1))
 hist(df_sample$a_hat, breaks = 30, col = "gray90", border = "white",
-     main = "Marginal Distribution", xlab = "Estimated CN")
+     main = "Marginal Distribution", xlab = "Estimated Copy number")
 abline(v = 1, col = "red", lwd = 2, lty = 2)
 
 plot(df_sample$a_hat, type = "l", col = "steelblue",
-     main = "CN across Position", xlab = "Bin Index", ylab = "a_hat")
+     main = "Copy number across Position", xlab = "Bin Index", ylab = "a_hat")
 abline(h = 1, col = "red", lty = 2)
 ```
-2a: Visualizing the Estimates, The plots show that we successfully removed the GC bias. The histogram is centered around 1, which is exactly what we expect for a healthy sample. Looking at the spatial plot, the estimates are stable without any major jumps, confirming that the copy number is uniform across this genomic region.  
-2b: Measuring the MAE of about 0.15 means that, on average, each bin deviates from the baseline by 15\%. This deviation represents the residual noise left in our model: a mix of random sampling variation and other minor technical factors.   
 
+2a.
+Visualizing the Estimates, The plots show that we successfully removed the GC bias.
+The histogram is centered around 1, which is exactly what we expect for a healthy sample.
+Looking at the spatial plot, the estimates are stable without any major jumps, giving us a more-or-less uniform copy number in the area we looked at.
 
-## R Markdown
+\
+2b: Measuring the MAE, we got \~0.15 (0.1443).
+This means that each bin deviates from the baseline by 15% on average.
+This deviation represents the residual noise left in our model: a mix of random sampling variation and other technical effects we mentioned in class as `seq`.
 
-This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+### Question 3
 
-When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+```{r, cache=TRUE}
+# bin the full chromosome and filter out:
+# - telomeres (<5 Mb, >242 Mb)
+# - centromere (120–130 Mb)
+# - bins with many N values, 0 reads
+chr1_len   <- nchar(chr1)
+df_full    <- bin_data(chr1_reads, chr1, 1, chr1_len, BIN_SIZE)
+bin_pos_mb <- (seq_len(nrow(df_full)) * BIN_SIZE) / 1e6
 
-```{r cars}
-summary(cars)
+keep   <- bin_pos_mb > 5 & bin_pos_mb < 242 &
+          !(bin_pos_mb >= 120 & bin_pos_mb <= 130) &
+          df_full$reads > 0
+df_chr <- df_full[keep, ]
+
+f_hat_chr <- suppressWarnings(predict(mod_spline, newdata = data.frame(gc = df_chr$gc)))
+
+# Poisson part: Var[Y_k] = lambda_k  = a_k*f(gc_k) = 1*f(gc_k)
+# So since we saw that Var_Y(a_k) = lambda_k / f^2(gc_k)
+# => Var_pois = f(gc_k)/ f^2(gc_k)
+var_pois <- f_hat_chr / f_hat_chr^2
+
+# ε part: sigma^2 estimated empirically from spline residuals (no normality assumed)
+sigma2  <- var(residuals(mod_spline))
+var_eps <- sigma2 / f_hat_chr^2
+
+mean_var_pois <- mean(var_pois)
+mean_var_eps  <- mean(var_eps)
+total_var     <- mean_var_pois + mean_var_eps
+
+cat(sprintf("sigma^2:           %.5f\n", sigma2))
+cat(sprintf("Poisson variance:  %.5f  (%.1f%%)\n", mean_var_pois, 100 * mean_var_pois / total_var))
+cat(sprintf("epsilon variance:  %.5f  (%.1f%%)\n", mean_var_eps,  100 * mean_var_eps  / total_var))
+cat(sprintf("Total variance:    %.5f\n", total_var))
 ```
 
-## Including Plots
+The total estimated variance of $\hat{a}_k$ is `r round(total_var, 5)`, and comes from two sources - the inherent variance of the phenomena, modeled as the Poisson distribution, and the additional sequencing noise and technical effects.
+The Poisson component contributes `r round(100 * mean_var_pois / total_var, 1)`% of it, and the $\epsilon$ component the other `r round(100 * mean_var_eps / total_var, 1)`%, giving us $\hat{\sigma}^2$ = `r round(sigma2, 4)`.
 
-You can also embed plots, for example:
+This means that most of the uncertainty in the model comes from the unexplained part - the additional sequencing-related technical effects.
+So unless we try to model additional parts of the technical effects in this setup, the majority of the variance we see will remain.
 
-```{r pressure, echo=FALSE}
-plot(pressure)
-```
+### Question 4
 
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+In our original model, the noise is additive.
+this suggests that we have small deviations in measurements that are both independent of the $f_{gc}$ and $a_k$ factors, and that the magnitude of the errors is independent of the magnitude of these factors.
+So we should get some sort of random offset in our measurements.
+
+The multiplicative model we see in this questions multiplies the factors $f_{gc}$ and $a_k$ by the error, so it effectively scales the magnitude of the error proportionally to these factors.
+So here we get offset proportionate to the actual signal.
+
+From the biological perspective, this means that the errors are generated by the sequencing process in a way that scales with amount of DNA we measure.
+
+The new model does seem more fitting to our case, since the first model just assumes there's some external noise added to our final calculations.
+We can view the second model as incorporating the noise proportionally to the NGS process output, and think of it as multiplying the noise in each sequencing stage.
+
+## Short summary
+
+This lab takes the new Poisson GLM model we built in class, and incorporates the GC estimator we built in previous labs, in order to first estimate the copy number.
+We also estimate the variance and its components, and discuss the alternative multiplicative-error model.
+
+## External sources statement
+
+We used AI (Claude) to:
+
+1.  rewrite the values in our explanation parts as inline r calculations
+2.  rewrite the equations in the explanations as TEX
+3.  add `fit_gc_spline()` to `lab5_utils.R` so the model specification is shared across labs
+4.  fix the reads file path and add the missing `source("../lab5/lab5_utils.R")` call in the paths chunk
