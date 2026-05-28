@@ -240,7 +240,7 @@ knitr::kable(results, caption = "Comparison of bin-size models on held-out 10 kb
 So to conclude, we see generally 2 phenomena we also discussed in class: 
 1. increasing bin size reduces some of the noise inside each bin.
 2. the larger bins also ignore some of the smaller GC variation inside the cell.
-That is, looking at larger bin sizes reduces both noise and signal within the cell. 
+That is, looking at larger bin sizes reduces both noise and signal within the cell. In other words, we are experiencing a bias-variance tradeoff.
 Looking at the metrics, the smallest 10K-size model achieves the lowest loss values on the test set.  
 
 Our explanation is that smaller bins retain local GC structure that helps the spline fit the true coverage profile more accurately, 
@@ -256,3 +256,4 @@ We used AI (Claude) to:
 1. create the train-test splits
 2. align the sub-cells with their parent cells
 3. correct syntax for the spline overly graph.
+4. copy lab4 code for cross-validation.
