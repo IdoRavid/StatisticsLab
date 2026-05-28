@@ -4,3 +4,6 @@
 .Ruserdata
 .DS_Store
 .RDataTmp*
+
+# Large sequencing data files — too big for GitHub
+*.forward
