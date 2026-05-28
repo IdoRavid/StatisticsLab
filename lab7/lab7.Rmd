@@ -1,0 +1,258 @@
+---
+title: "HW7"
+author: "Group 12 - Shir, Omer & Ido"
+date: "02/06/26"
+output:
+  pdf_document:
+    latex_engine: xelatex
+    extra_dependencies: ["fvextra"]
+  html_document:
+    code_folding: show
+header-includes:
+  - \DefineVerbatimEnvironment{Highlighting}{Verbatim}{breaklines,commandchars=\\\{\}}
+editor_options:
+  markdown:
+    wrap: sentence
+---
+
+### Group:
+
+Group members (Name, ID, email)
+
+-   Ido Ravid, 207198177, ido.ravid\@mail.huji.ac.il
+
+-   Omer Sutovsky, 318735107 ,omer.sutovsky\@mail.huji.ac.il
+
+-   Shir Tsarfaty, 207718008, shir.tsarfaty\@mail.huji.ac.il
+
+### Paths and Data
+
+```{r paths_and_data}
+if (!require('data.table')) { install.packages('data.table'); library('data.table') }
+if (!require('splines'))    { install.packages('splines');    library('splines') }
+
+source("../utils.R")
+source("../lab5/lab5_utils.R")
+
+reads_file  <- "../lab2/data/TCGA-13-0723-10B_lib2_all_chr1.forward"
+chr1_file   <- "../lab1/data/chr1_str.rda"
+
+```
+
+## Introduction
+
+
+### Question 1
+
+
+### Question 2
+
+```{r q2-load, cache=TRUE}
+chr1_reads <- fread(reads_file, col.names = c("Chr", "Loc", "Length"))
+load(chr1_file)  # loads 'chr1'
+```
+
+```{r q2-bin-data, cache=TRUE}
+# Two valid regions, each length a multiple of 10000 so 10kb/2.5kb/1kb bins align perfectly.
+# Region A: 5 Mb – 119.99 Mb (pre-centromere, 114990000 bp = 11499 × 10kb)
+# Region B: 130 Mb – 242 Mb  (post-centromere, 112000000 bp = 11200 × 10kb)
+BEG_A <- 5000001L;  END_A <- 119990000L
+BEG_B <- 130000001L; END_B <- 242000000L
+
+df_10k_A <- bin_data(chr1_reads, chr1, BEG_A, END_A, 10000)
+df_2k5_A <- bin_data(chr1_reads, chr1, BEG_A, END_A, 2500)
+df_1k_A  <- bin_data(chr1_reads, chr1, BEG_A, END_A, 1000)
+
+df_10k_B <- bin_data(chr1_reads, chr1, BEG_B, END_B, 10000)
+df_2k5_B <- bin_data(chr1_reads, chr1, BEG_B, END_B, 2500)
+df_1k_B  <- bin_data(chr1_reads, chr1, BEG_B, END_B, 1000)
+```
+
+```{r q2-align}
+# add parent cell to each subcell
+n10k_A <- nrow(df_10k_A);  n10k_B <- nrow(df_10k_B)
+
+df_10k_A$cell_id <- paste0("A", seq_len(n10k_A))
+df_2k5_A$cell_id <- paste0("A", rep(seq_len(n10k_A), each = 4))
+df_1k_A$cell_id  <- paste0("A", rep(seq_len(n10k_A), each = 10))
+
+df_10k_B$cell_id <- paste0("B", seq_len(n10k_B))
+df_2k5_B$cell_id <- paste0("B", rep(seq_len(n10k_B), each = 4))
+df_1k_B$cell_id  <- paste0("B", rep(seq_len(n10k_B), each = 10))
+
+df_10k <- rbind(df_10k_A, df_10k_B)
+df_2k5 <- rbind(df_2k5_A, df_2k5_B)
+df_1k  <- rbind(df_1k_A,  df_1k_B)
+```
+
+```{r q2-train-test}
+# 85/15 split on 10kb cells, excluding zero-read 10kb cells from training.
+valid_10k <- df_10k[df_10k$reads > 0, ]
+set.seed(22)
+train_ids <- sample(valid_10k$cell_id, size = floor(0.85 * nrow(valid_10k)))
+test_ids  <- setdiff(valid_10k$cell_id, train_ids)
+
+train_10k <- df_10k[df_10k$cell_id %in% train_ids, ]
+train_2k5 <- df_2k5[df_2k5$cell_id %in% train_ids, ]
+train_1k  <- df_1k[df_1k$cell_id  %in% train_ids, ]
+
+test_10k  <- df_10k[df_10k$cell_id %in% test_ids, ]
+test_2k5  <- df_2k5[df_2k5$cell_id %in% test_ids, ]
+test_1k   <- df_1k[df_1k$cell_id  %in% test_ids, ]
+
+# Drop zero-read sub-cells from train only 
+train_10k <- train_10k[train_10k$reads > 0, ]
+train_2k5 <- train_2k5[train_2k5$reads > 0, ]
+train_1k  <- train_1k[train_1k$reads  > 0, ]
+
+cat(sprintf("Train: %d cells | Test: %d cells\n", length(train_ids), length(test_ids)))
+```
+
+```{r q2-fit}
+# Model selection following lab 4: same 4 candidates (varying knots and degree).
+# Each bin-size train set is split 80/20 into fit/val; the candidate with the
+# lowest validation RMSE is refitted on the full train set.
+
+candidate_models <- function(df_fit, df_val) {
+  bk <- range(df_fit$gc)
+  candidates <- list(
+    list(knots = quantile(df_fit$gc, c(0.25, 0.5, 0.75)), degree = 3),  # lab4 model 1
+    list(knots = quantile(df_fit$gc, c(1/3,  2/3)),        degree = 3),  # lab4 model 2
+    list(knots = median(df_fit$gc),                         degree = 3),  # lab4 model 3
+    list(knots = quantile(df_fit$gc, c(0.25, 0.5, 0.75)), degree = 2)   # lab4 model 4
+  )
+  rmses <- sapply(candidates, function(p) {
+    mod  <- lm(reads ~ bs(gc, knots = p$knots, degree = p$degree,
+                          Boundary.knots = bk), data = df_fit)
+    pred <- predict(mod, newdata = df_val)
+    sqrt(mean((df_val$reads - pred)^2))
+  })
+  list(best = which.min(rmses), rmses = rmses,
+       params = candidates[[which.min(rmses)]])
+}
+
+select_and_fit <- function(df_train, label) {
+  set.seed(22)
+  val_idx <- sample(nrow(df_train), floor(0.2 * nrow(df_train)))
+  df_fit  <- df_train[-val_idx, ]
+  df_val  <- df_train[ val_idx, ]
+  sel     <- candidate_models(df_fit, df_val)
+  cat(sprintf("%s — val RMSE: %s | winner: model %d\n",
+              label, paste(round(sel$rmses, 2), collapse = " / "), sel$best))
+  bk <- range(df_train$gc)
+  lm(reads ~ bs(gc, knots = sel$params$knots, degree = sel$params$degree,
+                Boundary.knots = bk), data = df_train)
+}
+
+mod_10k <- select_and_fit(train_10k, "10kb")
+mod_2k5 <- select_and_fit(train_2k5, "2.5kb")
+mod_1k  <- select_and_fit(train_1k,  "1kb")
+
+cat(sprintf("Train R²  — 10kb: %.3f | 2.5kb: %.3f | 1kb: %.3f\n",
+            summary(mod_10k)$r.squared,
+            summary(mod_2k5)$r.squared,
+            summary(mod_1k)$r.squared))
+```
+
+```{r q2-diagnostics, fig.width=12, fig.height=4}
+par(mfrow = c(1, 3))
+plot_fit(train_10k, mod_10k, "10 kb (train)", ylim = c(0, 600))
+plot_fit(train_2k5, mod_2k5, "2.5 kb (train)", ylim = c(0, 600))
+plot_fit(train_1k,  mod_1k,  "1 kb (train)",   ylim = c(0, 600))
+```
+Each of the 3 graphs shows a similar shape overall for the reads data, with bigger bins having more reads (obvioiusly - they are bigger).
+
+```{r q2-predict}
+# For each test 10kb cell, produce three predictions:
+#   10kb:  direct model prediction
+#   2.5kb: sum of predictions for 4 sub-cells
+#   1kb:   sum of predictions for 10 sub-cells
+pred_direct <- predict(mod_10k, newdata = test_10k)
+
+pred_2k5_sub <- predict(mod_2k5, newdata = test_2k5)
+pred_2k5_sum <- tapply(pred_2k5_sub, test_2k5$cell_id, sum)[test_10k$cell_id]
+
+pred_1k_sub  <- predict(mod_1k,  newdata = test_1k)
+pred_1k_sum  <- tapply(pred_1k_sub, test_1k$cell_id, sum)[test_10k$cell_id]
+
+truth <- test_10k$reads
+mae   <- function(p, y) mean(abs(p - y))
+
+cat(sprintf("MAE — 10kb: %.2f | 2.5kb: %.2f | 1kb: %.2f\n",
+            mae(pred_direct, truth),
+            mae(pred_2k5_sum, truth),
+            mae(pred_1k_sum, truth)))
+```
+
+```{r q2-comparison, fig.width=12, fig.height=4}
+par(mfrow = c(1, 3))
+lim <- c(0, 600)
+
+for (preds in list(list(pred_direct, "10 kb direct"),
+                   list(pred_2k5_sum, "2.5 kb summed"),
+                   list(pred_1k_sum,  "1 kb summed"))) {
+  plot(truth, preds[[1]], pch = 20, cex = 0.3, col = rgb(0, 0, 0, 0.2),
+       xlab = "Observed reads", ylab = "Predicted reads", main = preds[[2]],
+       xlim = lim, ylim = lim)
+  abline(0, 1, col = "red", lwd = 2)
+}
+```
+Overall, the 3 graphs show a visually similar result, with the spline model being able to estimate most of the points, while having an outlier groups of lower observed reads then those perdicted. Since the models perform similarly, the visual comparison is less useful then the metrics.
+
+```{r q2-splines-overlay, fig.width=7, fig.height=5}
+gc_seq <- seq(0.2, 0.7, length.out = 300)
+nd     <- data.frame(gc = gc_seq)
+
+# normalize to reads per kb so all three curves share a common y scale
+curve_10k <- predict(mod_10k, newdata = nd) / 10
+curve_2k5 <- predict(mod_2k5, newdata = nd) / 2.5
+curve_1k  <- predict(mod_1k,  newdata = nd) / 1
+
+ylim <- c(0, max(c(curve_10k, curve_2k5, curve_1k), na.rm = TRUE) * 1.05)
+
+plot(gc_seq, curve_10k, type = "l", lwd = 2.5, col = "#E41A1C",
+     xlab = "GC Content", ylab = "Reads per kb",
+     main = "GC–coverage splines (reads/kb)", ylim = ylim)
+lines(gc_seq, curve_2k5, lwd = 2.5, col = "#377EB8")
+lines(gc_seq, curve_1k,  lwd = 2.5, col = "#4DAF4A")
+legend("topright", legend = c("10 kb", "2.5 kb", "1 kb"),
+       col = c("#E41A1C", "#377EB8", "#4DAF4A"), lwd = 2.5)
+```
+We can see the models behave similarly, with a similar peak after 0.55 and almost identical values for the 0.3-0.45 region (which possibly holds a large chunk of the data). the extrapolation part of 0.6-0.7 and 0.2-0.3 is where most of the variation between the models come from.
+```{r q2-summary-table}
+mae  <- function(p, y) mean(abs(p - y))
+rmse <- function(p, y) sqrt(mean((p - y)^2))
+
+results <- data.frame(
+  Model       = c("10 kb (direct)", "2.5 kb (summed × 4)", "1 kb (summed × 10)"),
+  Train_R2    = round(c(summary(mod_10k)$r.squared,
+                        summary(mod_2k5)$r.squared,
+                        summary(mod_1k)$r.squared), 3),
+  Test_MAE    = round(c(mae(pred_direct,  truth),
+                        mae(pred_2k5_sum, truth),
+                        mae(pred_1k_sum,  truth)), 2),
+  Test_RMSE   = round(c(rmse(pred_direct,  truth),
+                        rmse(pred_2k5_sum, truth),
+                        rmse(pred_1k_sum,  truth)), 2)
+)
+knitr::kable(results, caption = "Comparison of bin-size models on held-out 10 kb cells")
+```
+So to conclude, we see generally 2 phenomena we also discussed in class: 
+1. increasing bin size reduces some of the noise inside each bin.
+2. the larger bins also ignore some of the smaller GC variation inside the cell.
+That is, looking at larger bin sizes reduces both noise and signal within the cell. 
+Looking at the metrics, the smallest 10K-size model achieves the lowest loss values on the test set.  
+
+Our explanation is that smaller bins retain local GC structure that helps the spline fit the true coverage profile more accurately, 
+and the summing step aggregates without losing that information.
+
+## Short summary
+
+In the second part, we saw that taking a smaller bin size and then aggergating serves as the best practice for predicting the coverage from the GC content.
+## External sources statement
+
+We used AI (Claude) to:
+
+1. create the train-test splits
+2. align the sub-cells with their parent cells
+3. correct syntax for the spline overly graph.
