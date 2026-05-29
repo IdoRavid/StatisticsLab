@@ -41,11 +41,12 @@ chr1_file   <- "../lab1/data/chr1_str.rda"
 
 ## Introduction
 
-In this lab we extend the copy-number estimation pipeline from Lab 6 to a two-sample setting.
-We work with paired sequencing files from the same patient: one from healthy tissue and one from a tumor.
-Both samples are mapped to chromosome 1, and both exhibit the same technical artifact — read coverage depends on the local GC content of the genome, independently of any biological signal.
-In Question 1 we correct for this GC bias by fitting a spline regression of coverage on GC content separately for each sample, use the fitted curves to estimate copy number at each 2500 bp bin, and compare the two samples to identify regions where the tumor deviates from the diploid baseline.
-In Question 2 we ask whether 2500 bp is the right bin size: we train spline models at three resolutions (10 kb, 2.5 kb, 1 kb), aggregate the finer-grained predictions back to the 10 kb scale, and compare prediction error to find the resolution that best captures the GC–coverage relationship.
+In this lab we extend the copy-number estimation from Lab 6 to a two-sample setting.
+We work with paired sequencing files of chromosome 1 from the same patient: one from healthy tissue and one from a tumor.
+
+In question 1 we correct the GC bias with the gc-spline we created in previous labs, and based on the statistical model we developed in week 6.
+
+In question 2 we try again to find the optimal bin size, now using an aggregative model instead of using the same window size for estimations of different windows. 
 
 ### Question 1
 
@@ -374,6 +375,7 @@ Looking at the metrics, the smallest 10K-size model achieves the lowest loss val
 Our explanation is that smaller bins retain local GC structure that helps the spline fit the true coverage profile more accurately, and the summing step aggregates without losing that information.
 
 ## Short summary
+In the first part, we compared the reads estimates for healthy and cancerous chromosomes, and showed the differences.
 
 In the second part, we saw that taking a smaller bin size and then aggergating serves as the best practice for predicting the coverage from the GC content.
 ## External sources statement
