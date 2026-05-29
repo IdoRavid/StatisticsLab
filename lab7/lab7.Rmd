@@ -41,9 +41,128 @@ chr1_file   <- "../lab1/data/chr1_str.rda"
 
 ## Introduction
 
+In this lab we extend the copy-number estimation pipeline from Lab 6 to a two-sample setting.
+We work with paired sequencing files from the same patient: one from healthy tissue and one from a tumor.
+Both samples are mapped to chromosome 1, and both exhibit the same technical artifact — read coverage depends on the local GC content of the genome, independently of any biological signal.
+In Question 1 we correct for this GC bias by fitting a spline regression of coverage on GC content separately for each sample, use the fitted curves to estimate copy number at each 2500 bp bin, and compare the two samples to identify regions where the tumor deviates from the diploid baseline.
+In Question 2 we ask whether 2500 bp is the right bin size: we train spline models at three resolutions (10 kb, 2.5 kb, 1 kb), aggregate the finer-grained predictions back to the 10 kb scale, and compare prediction error to find the resolution that best captures the GC–coverage relationship.
 
 ### Question 1
 
+```{r q1-load, cache=TRUE}
+LIB <- "lib2"   # group A → lib2; group B/C → lib1
+
+healthy_file <- sprintf("../lab2/data/TCGA-13-0723-10B_%s_all_chr1.forward", LIB)
+tumor_file   <- sprintf("../lab7/data/TCGA-13-0723-01A_%s_all_chr1.forward", LIB)
+
+if (!file.exists(healthy_file)) stop("Missing: ", healthy_file)
+if (!file.exists(tumor_file))   stop("Missing: ", tumor_file)
+
+healthy_reads <- fread(healthy_file, col.names = c("Chr", "Loc", "Length"))
+tumor_reads   <- fread(tumor_file,   col.names = c("Chr", "Loc", "Length"))
+
+load(chr1_file)
+BIN_Q1 <- 2500
+```
+
+```{r q1-bin, cache=TRUE}
+# Same chromosome arms as Q2 so both questions use identical bin boundaries.
+BEG_A <- 5000001L;   END_A <- 119990000L
+BEG_B <- 130000001L; END_B <- 242000000L
+
+bin_two_regions <- function(reads, bin_size) {
+  dA <- bin_data(reads, chr1, BEG_A, END_A, bin_size); dA$region <- "A"
+  dB <- bin_data(reads, chr1, BEG_B, END_B, bin_size); dB$region <- "B"
+  dA$bin_idx <- seq_len(nrow(dA))
+  dB$bin_idx <- seq_len(nrow(dB))
+  rbind(dA, dB)
+}
+
+df_h <- bin_two_regions(healthy_reads, BIN_Q1); df_h$sample <- "Healthy"
+df_t <- bin_two_regions(tumor_reads,   BIN_Q1); df_t$sample <- "Tumor"
+cat(sprintf("Healthy bins: %d | Tumor bins: %d\n", nrow(df_h), nrow(df_t)))
+```
+
+```{r q1-fit}
+# fit_gc_spline() is from lab5_utils.R — same spline family used in Q2.
+fit_h <- fit_gc_spline(df_h[df_h$reads > 0, ])
+fit_t <- fit_gc_spline(df_t[df_t$reads > 0, ])
+cat(sprintf("R²  Healthy: %.3f | Tumor: %.3f\n",
+            summary(fit_h)$r.squared, summary(fit_t)$r.squared))
+```
+
+```{r q1-gc-plots, fig.width=11, fig.height=4}
+par(mfrow = c(1, 2))
+plot_fit(df_h[df_h$reads > 0, ], fit_h, "Healthy: GC vs coverage (2.5 kb)", ylim = c(0, 300))
+plot_fit(df_t[df_t$reads > 0, ], fit_t, "Tumor: GC vs coverage (2.5 kb)",   ylim = c(0, 300))
+```
+
+he two samples show a clear non-linear relationship between GC content and read coverage.
+In both samples, coverage is low around very low GC values and increases toward intermediate GC values, with the main peak around GC $\approx$ 0.5.
+This supports the idea that GC content has a meaningful effect on coverage and should be corrected before estimating copy number.
+The fitted spline also explains a substantial part of the variation: $R^2 = 0.629$ for the healthy sample and $R^2 = 0.484$ for the tumor sample.
+
+However, the relationship is not identical between the samples.
+The tumor sample has generally higher coverage and a wider spread of read counts, and its fitted curve is less stable, especially at the GC extremes where there are fewer observations.
+Therefore, the samples have a similar qualitative GC-coverage pattern, but the exact regression functions differ.
+This suggests that it is better to estimate a separate GC-correction function for each sample rather than assume one shared function.
+
+```{r q1-compare-curves, fig.width=7, fig.height=5}
+gc_grid <- data.frame(gc = seq(
+  max(min(df_h$gc), min(df_t$gc)),
+  min(max(df_h$gc), max(df_t$gc)),
+  length.out = 400))
+
+plot(gc_grid$gc, predict(fit_h, gc_grid),
+     type = "l", lwd = 3, col = "steelblue",
+     xlab = "GC content", ylab = "Expected reads / 2.5 kb bin",
+     main = "GC-coverage splines: healthy vs tumor")
+lines(gc_grid$gc, predict(fit_t, gc_grid), lwd = 3, col = "darkorange")
+legend("topright", legend = c("Healthy", "Tumor"),
+       col = c("steelblue", "darkorange"), lwd = 3, bty = "n")
+```
+
+The comparison between the fitted spline functions shows that both samples follow a similar general shape, but the magnitude and stability of the fitted functions are different.
+The healthy sample gives a smoother and more stable curve, while the tumor curve changes more sharply and seems more sensitive to extreme GC values.
+This is also reflected in the lower $R^2$ for the tumor sample, meaning that GC explains less of the coverage variation there compared with the healthy sample.
+
+```{r q1-copy-number}
+cn_est <- function(reads, gc, fit) {
+  fhat <- pmax(predict(fit, data.frame(gc = gc)), 1e-6)
+  raw  <- reads / fhat
+  raw / median(raw, na.rm = TRUE)   # normalize so median CN = 1
+}
+
+df_h$a_hat <- cn_est(df_h$reads, df_h$gc, fit_h)
+df_t$a_hat <- cn_est(df_t$reads, df_t$gc, fit_t)
+```
+
+```{r q1-scatter, fig.width=6, fig.height=6}
+cn <- merge(
+  df_h[, c("region", "bin_idx", "a_hat")],
+  df_t[, c("region", "bin_idx", "a_hat")],
+  by = c("region", "bin_idx"), suffixes = c("_h", "_t"))
+
+lim <- quantile(c(cn$a_hat_h, cn$a_hat_t), c(0.01, 0.99), na.rm = TRUE)
+plot(cn$a_hat_h, cn$a_hat_t,
+     pch = 20, cex = 0.35, col = rgb(0, 0, 0, 0.25),
+     xlab = "Copy number estimate - healthy",
+     ylab = "Copy number estimate - tumor",
+     main = "Tumor vs healthy copy-number (2.5 kb bins)",
+     xlim = lim, ylim = lim)
+abline(0, 1, col = "red", lwd = 2, lty = 2)
+legend("topleft", bty = "n",
+       legend = sprintf("r = %.3f",
+         cor(cn$a_hat_h, cn$a_hat_t, use = "complete.obs")))
+```
+
+The scatter plot compares the estimated copy number in matching genomic bins between the healthy and tumor samples.
+If the two samples had very similar copy-number structure, we would expect the points to lie close to the red diagonal line.
+Instead, the correlation is very low, $r=0.096$, meaning that the bin-level copy-number estimates are only weakly related between the two samples.
+
+Most points are still centered around copy number 1 because each sample was normalized so that the median copy-number estimate is 1.
+However, the large spread around the diagonal suggests that many genomic bins receive different estimates in the tumor and healthy samples.
+This may reflect tumor-specific copy-number changes, but also bin-level noise and remaining unexplained technical variation, especially because the bins are relatively small at 2.5 kb.
 
 ### Question 2
 
@@ -160,6 +279,7 @@ plot_fit(train_10k, mod_10k, "10 kb (train)", ylim = c(0, 600))
 plot_fit(train_2k5, mod_2k5, "2.5 kb (train)", ylim = c(0, 600))
 plot_fit(train_1k,  mod_1k,  "1 kb (train)",   ylim = c(0, 600))
 ```
+
 Each of the 3 graphs shows a similar shape overall for the reads data, with bigger bins having more reads (obvioiusly - they are bigger).
 
 ```{r q2-predict}
@@ -197,7 +317,9 @@ for (preds in list(list(pred_direct, "10 kb direct"),
   abline(0, 1, col = "red", lwd = 2)
 }
 ```
-Overall, the 3 graphs show a visually similar result, with the spline model being able to estimate most of the points, while having an outlier groups of lower observed reads then those perdicted. Since the models perform similarly, the visual comparison is less useful then the metrics.
+
+Overall, the 3 graphs show a visually similar result, with the spline model being able to estimate most of the points, while having an outlier groups of lower observed reads then those perdicted.
+Since the models perform similarly, the visual comparison is less useful then the metrics.
 
 ```{r q2-splines-overlay, fig.width=7, fig.height=5}
 gc_seq <- seq(0.2, 0.7, length.out = 300)
@@ -218,7 +340,10 @@ lines(gc_seq, curve_1k,  lwd = 2.5, col = "#4DAF4A")
 legend("topright", legend = c("10 kb", "2.5 kb", "1 kb"),
        col = c("#E41A1C", "#377EB8", "#4DAF4A"), lwd = 2.5)
 ```
-We can see the models behave similarly, with a similar peak after 0.55 and almost identical values for the 0.3-0.45 region (which possibly holds a large chunk of the data). the extrapolation part of 0.6-0.7 and 0.2-0.3 is where most of the variation between the models come from.
+
+We can see the models behave similarly, with a similar peak after 0.55 and almost identical values for the 0.3-0.45 region (which possibly holds a large chunk of the data).
+the extrapolation part of 0.6-0.7 and 0.2-0.3 is where most of the variation between the models come from.
+
 ```{r q2-summary-table}
 mae  <- function(p, y) mean(abs(p - y))
 rmse <- function(p, y) sqrt(mean((p - y)^2))
@@ -237,14 +362,16 @@ results <- data.frame(
 )
 knitr::kable(results, caption = "Comparison of bin-size models on held-out 10 kb cells")
 ```
-So to conclude, we see generally 2 phenomena we also discussed in class: 
-1. increasing bin size reduces some of the noise inside each bin.
-2. the larger bins also ignore some of the smaller GC variation inside the cell.
-That is, looking at larger bin sizes reduces both noise and signal within the cell. In other words, we are experiencing a bias-variance tradeoff.
-Looking at the metrics, the smallest 10K-size model achieves the lowest loss values on the test set.  
 
-Our explanation is that smaller bins retain local GC structure that helps the spline fit the true coverage profile more accurately, 
-and the summing step aggregates without losing that information.
+So to conclude, we see generally 2 phenomena we also discussed in class: 1.
+increasing bin size reduces some of the noise inside each bin.
+2.
+the larger bins also ignore some of the smaller GC variation inside the cell.
+That is, looking at larger bin sizes reduces both noise and signal within the cell.
+In other words, we are experiencing a bias-variance tradeoff.
+Looking at the metrics, the smallest 10K-size model achieves the lowest loss values on the test set.
+
+Our explanation is that smaller bins retain local GC structure that helps the spline fit the true coverage profile more accurately, and the summing step aggregates without losing that information.
 
 ## Short summary
 
@@ -253,7 +380,7 @@ In the second part, we saw that taking a smaller bin size and then aggergating s
 
 We used AI (Claude) to:
 
-1. create the train-test splits
-2. align the sub-cells with their parent cells
-3. correct syntax for the spline overly graph.
-4. copy lab4 code for cross-validation.
+1.  create the train-test splits
+2.  align the sub-cells with their parent cells
+3.  correct syntax for the spline overly graph.
+4.  copy lab4 code for cross-validation.

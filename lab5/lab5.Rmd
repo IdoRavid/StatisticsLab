@@ -403,6 +403,53 @@ legend("topleft",
        lwd = 2.5, lty = c(1, 2, 3), bty = "n", cex = 1.0)
 ```
 
+```{r section-d-variance-data, include=FALSE}
+# Build bin-wise overdispersion table for section-d-plot2
+
+df_var <- data.frame(
+  gc = df_main$gc,
+  reads = df_main$reads,
+  fitted_pois = fitted(mod_pois)
+)
+
+# Use quantile bins so each bin has roughly the same number of observations
+n_bins_gc <- 20
+
+breaks_gc <- unique(
+  quantile(
+    df_var$gc,
+    probs = seq(0, 1, length.out = n_bins_gc + 1),
+    na.rm = TRUE
+  )
+)
+
+df_var$gc_bin <- cut(
+  df_var$gc,
+  breaks = breaks_gc,
+  include.lowest = TRUE
+)
+
+# For each GC bin:
+# gc_center   = average GC in the bin
+# mean_reads  = average observed reads
+# var_reads   = empirical variance of observed reads
+# mean_fitted = average fitted mean from Poisson model
+var_summary <- data.frame(
+  gc_center = as.numeric(tapply(df_var$gc, df_var$gc_bin, mean)),
+  mean_reads = as.numeric(tapply(df_var$reads, df_var$gc_bin, mean)),
+  var_reads = as.numeric(tapply(df_var$reads, df_var$gc_bin, var)),
+  mean_fitted = as.numeric(tapply(df_var$fitted_pois, df_var$gc_bin, mean)),
+  n = as.numeric(tapply(df_var$reads, df_var$gc_bin, length))
+)
+
+# Local variance-to-mean ratio:
+# observed variance divided by Poisson fitted mean
+var_summary$bin_vmr <- var_summary$var_reads / var_summary$mean_fitted
+
+# Remove possible empty/NA rows
+var_summary <- var_summary[complete.cases(var_summary), ]
+```
+
 ```{r section-d-plot2, fig.width=10, fig.height=6}
 y_max <- max(var_summary$bin_vmr, phi_hat, 1, na.rm = TRUE) * 1.12
 
