@@ -92,7 +92,7 @@ cat(sprintf("R²  Healthy: %.3f | Tumor: %.3f\n",
             summary(fit_h)$r.squared, summary(fit_t)$r.squared))
 ```
 
-```{r q1-gc-plots, fig.width=11, fig.height=4}
+```{r q1-gc-plots, fig.width=11, fig.height=4, dev="png", dpi=200}
 par(mfrow = c(1, 2))
 plot_fit(df_h[df_h$reads > 0, ], fit_h, "Healthy: GC vs coverage (2.5 kb)", ylim = c(0, 300))
 plot_fit(df_t[df_t$reads > 0, ], fit_t, "Tumor: GC vs coverage (2.5 kb)",   ylim = c(0, 300))
@@ -138,7 +138,7 @@ df_h$a_hat <- cn_est(df_h$reads, df_h$gc, fit_h)
 df_t$a_hat <- cn_est(df_t$reads, df_t$gc, fit_t)
 ```
 
-```{r q1-scatter, fig.width=6, fig.height=6}
+```{r q1-scatter, fig.width=6, fig.height=6, dev="png", dpi=200}
 cn <- merge(
   df_h[, c("region", "bin_idx", "a_hat")],
   df_t[, c("region", "bin_idx", "a_hat")],
@@ -274,7 +274,7 @@ cat(sprintf("Train R²  — 10kb: %.3f | 2.5kb: %.3f | 1kb: %.3f\n",
             summary(mod_1k)$r.squared))
 ```
 
-```{r q2-diagnostics, fig.width=12, fig.height=4}
+```{r q2-diagnostics, fig.width=12, fig.height=4, dev="png", dpi=200}
 par(mfrow = c(1, 3))
 plot_fit(train_10k, mod_10k, "10 kb (train)", ylim = c(0, 600))
 plot_fit(train_2k5, mod_2k5, "2.5 kb (train)", ylim = c(0, 600))
