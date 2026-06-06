@@ -7,3 +7,4 @@
 
 # Large sequencing data files — too big for GitHub
 *.forward
+lab8/lab8_cache/

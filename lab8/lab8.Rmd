@@ -1,0 +1,277 @@
+---
+title: "HW8"
+author: "Group 12 - Shir, Omer & Ido"
+date: "09/06/26"
+output:
+  pdf_document:
+    latex_engine: xelatex
+    extra_dependencies: ["fvextra"]
+  html_document:
+    code_folding: show
+header-includes:
+  - \DefineVerbatimEnvironment{Highlighting}{Verbatim}{breaklines,commandchars=\\\{\}}
+editor_options:
+  markdown:
+    wrap: sentence
+---
+
+### Group:
+
+Group members (Name, ID, email)
+
+-   Ido Ravid, 207198177, ido.ravid\@mail.huji.ac.il
+
+-   Omer Sutovsky, 318735107 ,omer.sutovsky\@mail.huji.ac.il
+
+-   Shir Tsarfaty, 207718008, shir.tsarfaty\@mail.huji.ac.il
+
+### Paths and Data
+
+```{r paths_and_data}
+if (!require('data.table')) { install.packages('data.table'); library('data.table') }
+if (!require('splines'))    { install.packages('splines');    library('splines') }
+
+source("../utils.R")
+source("../lab5/lab5_utils.R")
+
+healthy_file <- "../lab2/data/TCGA-13-0723-10B_lib2_all_chr1.forward"
+tumor_file   <- "../lab7/data/TCGA-13-0723-01A_lib2_all_chr1.forward"
+chr1_file    <- "../lab1/data/chr1_str.rda"
+```
+
+## Introduction
+
+In this lab we compare the main statistical models we came up with throughout the semester- both single-sample and two-sample models, and GC-corrected and non-corrected variants.
+
+Incorporating both GC content and two-samples should help us capture the majority of the variance caused by technical effects, and thus predict copy number efficiently.
+
+As mentioned in the lab description, we focus on two specific regions.
+with \~0.4 GC content and use 2.5kb windows.
+
+The four methods are:
+
+-   **(a)** No correction — raw read counts, median normalized to 1.
+-   **(b)** Single-sample GC correction — divide by the fitted GC spline, then median-normalize (lab 6/7 estimator).
+-   **(c)** Two-sample correction without GC — divide the tumor estimate by the healthy estimate, without any GC correction.
+-   **(d)** Two-sample correction after GC — divide the GC-corrected tumor by the GC-corrected healthy.
+
+------------------------------------------------------------------------
+
+### Question A
+
+```{r qa-load, cache=TRUE}
+healthy_reads <- fread(healthy_file, col.names = c("Chr", "Loc", "Length"))
+tumor_reads   <- fread(tumor_file,   col.names = c("Chr", "Loc", "Length"))
+load(chr1_file)
+```
+
+```{r qa-bin, cache=TRUE}
+BIN  <- 2500
+BEG  <- 5000001L
+END  <- 100000000L
+
+df_h <- bin_data(healthy_reads, chr1, BEG, END, BIN)
+df_t <- bin_data(tumor_reads,   chr1, BEG, END, BIN)
+
+# genomic midpoint of each bin
+n_bins      <- nrow(df_h)
+df_h$pos    <- BEG + (seq_len(n_bins) - 1) * BIN + BIN / 2
+df_t$pos    <- df_h$pos
+
+cat(sprintf("Bins: %d  |  region: %.0f – %.0f Mb\n",
+            n_bins, BEG / 1e6, (BEG + n_bins * BIN) / 1e6))
+```
+
+```{r qa-splines, cache=TRUE}
+# Fit GC splines on non-zero bins (same as lab 7)
+fit_h <- fit_gc_spline(df_h[df_h$reads > 0, ])
+fit_t <- fit_gc_spline(df_t[df_t$reads > 0, ])
+cat(sprintf("R²  Healthy: %.3f | Tumor: %.3f\n",
+            summary(fit_h)$r.squared, summary(fit_t)$r.squared))
+```
+
+```{r qa-corrections}
+eps <- 1  # stabilizer as discussed in class.
+
+# GC-based expected coverage (floored at 0)
+fhat_h <- pmax(predict(fit_h, data.frame(gc = df_h$gc)), 0)
+fhat_t <- pmax(predict(fit_t, data.frame(gc = df_t$gc)), 0)
+
+# (a) no correction: raw, median-normalized
+a_h <- df_h$reads / median(df_h$reads[df_h$reads > 0])
+a_t <- df_t$reads / median(df_t$reads[df_t$reads > 0])
+
+# (b) single-sample GC correction (lab-6 plug-in estimator)
+b_raw_h <- (df_h$reads + eps) / (fhat_h + eps)
+b_raw_t <- (df_t$reads + eps) / (fhat_t + eps)
+b_h <- b_raw_h / median(b_raw_h[df_h$reads > 0])
+b_t <- b_raw_t / median(b_raw_t[df_t$reads > 0])
+
+# (c) two-sample, no GC: tumor / healthy ratio after median normalization
+c_hat <- (df_t$reads + eps) / (df_h$reads + eps) *
+          median(df_h$reads[df_h$reads > 0]) /
+          median(df_t$reads[df_t$reads > 0])
+
+# (d) two-sample after GC: GC-corrected tumor / GC-corrected healthy
+d_hat <- b_t / b_h
+```
+
+```{r qa-plot, fig.width=12, fig.height=9, dev="png", dpi=200}
+regions <- list(
+  list(label = "25 – 30 Mb", lo = 25e6, hi = 30e6),
+  list(label = "75 – 80 Mb", lo = 75e6, hi = 80e6)
+)
+
+methods <- list(
+  list(y = a_t,  col = "#555555", lbl = "(a) No correction"),
+  list(y = b_t,  col = "#56B4E9", lbl = "(b) Single-sample GC"),
+  list(y = c_hat, col = "#E69F00", lbl = "(c) Two-sample, no GC"),
+  list(y = d_hat, col = "#009E73", lbl = "(d) Two-sample + GC")
+)
+
+par(mfrow = c(2, 4), mar = c(3.5, 3.5, 2.5, 1), mgp = c(2, 0.7, 0))
+
+for (reg in regions) {
+  idx <- df_h$pos >= reg$lo & df_h$pos <= reg$hi
+  x   <- df_h$pos[idx] / 1e6
+
+  # shared y-axis across all four methods for this region
+  all_vals <- unlist(lapply(methods, function(m) m$y[idx]))
+  ylim_use <- quantile(all_vals, c(0.005, 0.995), na.rm = TRUE)
+  ylim_use[1] <- max(0, ylim_use[1] - 0.1)
+  ylim_use[2] <- ylim_use[2] + 0.1
+
+  for (m in methods) {
+    y <- m$y[idx]
+
+    plot(x, y,
+         pch = 20, cex = 0.35, col = rgb(0, 0, 0, 0.25),
+         xlab = "Position (Mb)", ylab = "Copy-number estimate",
+         main = sprintf("%s\n%s", reg$label, m$lbl),
+         ylim = ylim_use)
+    abline(h = 1, col = m$col, lwd = 2, lty = 2)
+
+    # running median to show trend
+    ord  <- order(x)
+    smth <- runmed(y[ord], k = 11)
+    lines(x[ord], smth, col = m$col, lwd = 2)
+  }
+}
+```
+
+Each panel shows a dashed reference at CN = 1 and a running median trend line.
+
+In the 25–30 Mb region, a dip below 1 near 28.5 Mb becomes visible after GC correction (b, d) and is sharpest in the two-sample methods, which also cancel shared technical variation between the libraries.
+In the 75–80 Mb region, uncorrected estimates are noisier and off-center; GC correction brings them back toward 1.
+
+```{r qa-overlay, fig.width=12, fig.height=5, dev="png", dpi=200}
+method_cols  <- c("(a)" = "#555555", "(b)" = "#56B4E9",
+                  "(c)" = "#E69F00", "(d)" = "#009E73")
+method_names <- c("(a) No correction", "(b) Single-sample GC",
+                  "(c) Two-sample, no GC", "(d) Two-sample + GC")
+all_y <- list(a_t, b_t, c_hat, d_hat)
+
+par(mfrow = c(1, 2), mar = c(3.5, 3.5, 2.5, 1), mgp = c(2, 0.7, 0))
+
+for (reg in regions) {
+  idx <- df_h$pos >= reg$lo & df_h$pos <= reg$hi
+  x   <- df_h$pos[idx] / 1e6
+
+  # y-axis range: clip at 5th/95th pct across all four methods combined
+  all_vals <- unlist(lapply(all_y, function(y) y[idx]))
+  ylim_use <- quantile(all_vals, c(0.05, 0.95), na.rm = TRUE)
+  ylim_use <- c(max(0, ylim_use[1] - 0.1), ylim_use[2] + 0.1)
+
+  plot(NA, xlim = range(x), ylim = ylim_use,
+       xlab = "Position (Mb)", ylab = "Copy-number estimate",
+       main = reg$label)
+  abline(h = 1, col = "grey70", lwd = 1, lty = 2)
+
+  for (i in seq_along(all_y)) {
+    y    <- all_y[[i]][idx]
+    ord  <- order(x)
+    smth <- runmed(y[ord], k = 51)
+    lines(x[ord], smth, col = method_cols[i], lwd = 2.5)
+  }
+
+  legend("topright", legend = method_names,
+         col = method_cols, lwd = 2.5, bty = "n", cex = 0.8)
+}
+```
+
+The overlay graph allows us to compare more directly -In the 75-80 MB region, the GC-corrected graphs generally create more conservative estimates, while the the Two sample generaly estimates the CN to be higher then 1, and the uncorrected estimator generates lower estimates.
+in the 25-30 Mb region, the GC-normalized graph are still more conservatrive but the non-normalized estimators switch roles in overestimation/underestimation.
+
+------------------------------------------------------------------------
+
+### Question B
+
+We use a t-test to quantify how well each method separates the CN loss event from the surrounding background.
+The t-statistic measures the difference between the event mean and the background mean, scaled by the combined within-group noise:
+
+$$t = \frac{\bar{a}_\text{bg} - \bar{a}_\text{event}}{\sqrt{s^2_\text{bg}/n_\text{bg} + s^2_\text{event}/n_\text{event}}}$$
+
+A larger $t$ means the loss signal is more clearly detectable above the noise floor — both a bigger mean shift and lower within-region variance contribute.
+
+-   **Event region**: 28.0–29.0 Mb (the known CN loss near 28.5 Mb, $a_k < 1$).
+-   **Background**: flanking windows 25–28 Mb and 29–30 Mb, expected CN = 1.
+
+```{r qb-metric}
+event_mask <- df_h$pos >= 28.0e6 & df_h$pos <  29.0e6
+bg_mask    <- (df_h$pos >= 25.0e6 & df_h$pos < 28.0e6) |
+              (df_h$pos >= 29.0e6 & df_h$pos <= 30.0e6)
+
+welch_t <- function(y) {
+  y_clean <- pmin(y, 5)
+  ev <- y_clean[event_mask]; ev <- ev[is.finite(ev)]
+  bg <- y_clean[bg_mask];   bg <- bg[is.finite(bg)]
+  tt <- t.test(bg, ev, alternative = "greater")
+  data.frame(mean_bg    = round(mean(bg), 3),
+             mean_event = round(mean(ev), 3),
+             t_stat     = round(tt$statistic, 2),
+             p_value    = signif(tt$p.value, 3))
+}
+
+results <- do.call(rbind, lapply(
+  list("(a) No correction"     = a_t,
+       "(b) Single-sample GC"  = b_t,
+       "(c) Two-sample, no GC" = c_hat,
+       "(d) Two-sample + GC"   = d_hat),
+  welch_t))
+
+knitr::kable(results,
+             col.names = c("Mean CN (background)", "Mean CN (event)", "t-statistic", "p-value"),
+             caption   = "Welch t-test: background vs. event region (~28.5 Mb CN loss)")
+```
+
+Method (d) gives the highest t-statistic, confirming it best separates the loss from background noise.
+Method (b) is second best, proving that the GC correction alone already helps.
+Method (a) shows weaker separation, and method (c) pretty much fails- the raw ratio flattens the entire region, and the event is indistinguishable from the background.
+
+------------------------------------------------------------------------
+
+### Question C
+
++---------------------------+----------------------------------------------------+----------------------------------------------------------------------+
+| Method                    | Advantages                                         | Disadvantages                                                        |
++===========================+====================================================+======================================================================+
+| **(b)** Single-sample GC  | 1.  Only one sample needed;                        | 1.  doesn't capture effects in this specific sample                  |
+|                           | 2.  adresses the main technical effect             | 2.  Splines don't estimate well in low/high GC areas.                |
++---------------------------+----------------------------------------------------+----------------------------------------------------------------------+
+| **(c)** Two-sample, no GC | 1.  Simpler model statistically                    | 1.  Does not capture the GC effect, and may make it become noisier.  |
+|                           | 2.  Sample-specific effects are addressed          | 2.  Needs 2 samples                                                  |
++---------------------------+----------------------------------------------------+----------------------------------------------------------------------+
+| **(d)** Two-sample + GC   | 1.  Has both GC effect and sample-specific effects | 1.  More complicated statistical model                               |
+|                           |                                                    | 2.  GC estimator may cause extreme values (as we mentioned in class) |
+|                           |                                                    | 3.  Needs 2 samples                                                  |
++---------------------------+----------------------------------------------------+----------------------------------------------------------------------+
+
+------------------------------------------------------------------------
+
+## External sources statement
+
+We used AI (Claude) to:
+
+1.  Offer alternatives to the statistic in B. In the end went with our own suggestion.
+2.  Format C in a table, Format equation for B.
+3.  Correct model syntax in A.
