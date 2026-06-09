@@ -38,38 +38,57 @@ source("../utils.R")
 source("../lab5/lab5_utils.R")
 
 healthy_file <- "../lab2/data/TCGA-13-0723-10B_lib2_all_chr1.forward"
+tumor_file   <- "../lab7/data/TCGA-13-0723-01A_lib2_all_chr1.forward"
 chr1_file    <- "../lab1/data/chr1_str.rda"
 ```
 
 ```{r load-data, cache=TRUE}
 healthy_reads <- fread(healthy_file, col.names = c("Chr", "Loc", "Length"))
+tumor_reads   <- fread(tumor_file,   col.names = c("Chr", "Loc", "Length"))
 load(chr1_file)
 ```
 
 ```{r bin-and-correct, cache=TRUE}
 BIN <- 2500
 
-# Two arms around centromere (120-130 Mb excluded)
-dfA <- bin_data(healthy_reads, chr1, 5000001L,   119990000L, BIN)
-dfB <- bin_data(healthy_reads, chr1, 130000001L, 242000000L, BIN)
-
 add_pos <- function(df, beg) {
   df$pos <- beg + (seq_len(nrow(df)) - 1) * BIN + BIN / 2
   df
 }
-dfA <- add_pos(dfA, 5000001L)
-dfB <- add_pos(dfB, 130000001L)
-df  <- rbind(dfA, dfB)
 
-# GC spline + plug-in estimator (same as lab 8 method b)
-eps  <- 1
-nz   <- df$reads > 0
-fit  <- fit_gc_spline(df[nz, ])
-fhat <- pmax(predict(fit, data.frame(gc = df$gc)), 0)
-raw  <- (df$reads + eps) / (fhat + eps)
-df$cn <- raw / median(raw[nz])
+# Two arms around centromere (120-130 Mb excluded), both samples
+df_h <- rbind(
+  add_pos(bin_data(healthy_reads, chr1, 5000001L,   119990000L, BIN), 5000001L),
+  add_pos(bin_data(healthy_reads, chr1, 130000001L, 242000000L, BIN), 130000001L)
+)
+df_t <- rbind(
+  add_pos(bin_data(tumor_reads, chr1, 5000001L,   119990000L, BIN), 5000001L),
+  add_pos(bin_data(tumor_reads, chr1, 130000001L, 242000000L, BIN), 130000001L)
+)
 
-cat(sprintf("Total bins: %d  |  non-zero: %d\n", nrow(df), sum(nz)))
+# Per-sample GC spline + plug-in estimator (lab 8 method b)
+eps <- 1
+gc_correct <- function(df) {
+  nz   <- df$reads > 0
+  fit  <- fit_gc_spline(df[nz, ])
+  fhat <- pmax(predict(fit, data.frame(gc = df$gc)), 0)
+  raw  <- (df$reads + eps) / (fhat + eps)
+  raw / median(raw[nz])
+}
+df_h$cn <- gc_correct(df_h)
+df_t$cn <- gc_correct(df_t)
+
+# Two-sample estimator (lab 8 method d): GC-corrected tumor / GC-corrected healthy
+df_t$cn_2s <- df_t$cn / df_h$cn
+
+nz_h <- df_h$reads > 0
+nz_t <- df_t$reads > 0
+nz   <- nz_h & nz_t   # bins with reads in both samples
+
+# alias so rest of code uses df / df$cn referring to working data frame
+df <- df_t
+
+cat(sprintf("Total bins: %d  |  both non-zero: %d\n", nrow(df), sum(nz)))
 ```
 
 ------------------------------------------------------------------------
@@ -78,50 +97,51 @@ cat(sprintf("Total bins: %d  |  non-zero: %d\n", nrow(df), sum(nz)))
 
 We need a statistic $T$ that summarises whether a genomic region has more or fewer reads than expected under copy number 1, while being **resistant to single noisy bins** -- meaning one extreme bin should not be able to drive the entire region to significance on its own.
 
-We work on $\log(\hat{a}_k)$, the log of the GC-corrected copy-number estimate from Lab 8 (method b, single-sample spline correction).
-Taking the log has two advantages: under $H_0$ (CN = 1) the statistic is centred at 0, and the distribution is approximately symmetric (raw $\hat{a}_k$ is right-skewed since CN cannot go below 0).
-Gains produce positive values; losses produce negative values.
+We use the **two-sample GC-corrected estimator** (Lab 8 method d): $\hat{a}_k = \hat{a}^\text{tumor}_k / \hat{a}^\text{healthy}_k$, where each sample is corrected by its own GC spline and median-normalised.
+Dividing cancels shared GC bias and library-specific technical effects, leaving a cleaner copy-number signal than single-sample correction alone.
+
+We then take $\log_2(\hat{a}_k)$: under $H_0$ (CN = 1) this is centred at 0, gains are positive, losses are negative, and the $\log_2$ scale has a natural interpretation (a value of 1 means a doubling; $-1$ means a halving).
 
 We considered three candidates, all computed as a rolling aggregate over a window of $W = 11$ bins ($\approx 27.5$ kb):
 
 | Statistic | Formula | Notes |
 |----|----|----|
-| **S1**: plain log | $\log(\hat{a}_k)$ -- per bin, no aggregation | Baseline |
-| **S2**: trimmed mean | $\overline{\log(\hat{a})}_{10\%}$ over window | Hard-discards top/bottom 10% of bins |
-| **S3**: Huber location | $\hat{\mu}_\text{Huber}(\log(\hat{a}),\, k=1.345)$ over window | Continuously downweights outlier bins |
+| **S1**: plain log$_2$ | $\log_2(\hat{a}_k)$ -- per bin, no aggregation | Baseline |
+| **S2**: trimmed mean | $\overline{\log_2(\hat{a})}_{10\%}$ over window | Hard-discards top/bottom 10% of bins |
+| **S3**: Huber location | $\hat{\mu}_\text{Huber}(\log_2(\hat{a}),\, k=1.345)$ over window | Continuously downweights outlier bins |
 
 We evaluated all three against the empirical null (Part B) and found that S2 and S3 produce artificially light-tailed null distributions when combined with the local-stability negative control filter: the filter already removes noisy bins, so applying a further robust aggregation over-compresses the tails.
-**S1 -- plain** $\log(\hat{a}_k)$ -- produces the most normal-shaped null under the selected control regions, and is therefore our chosen statistic.
+**S1 -- plain** $\log_2(\hat{a}_k)$ -- produces the most normal-shaped null under the selected control regions, and is therefore our chosen statistic.
 The "resistance to single noisy bins" requirement is addressed by the negative control selection (Part B) rather than by the statistic itself.
 
 ```{r define-statistics}
 W    <- 11
 HALF <- (W - 1) / 2
 
-log_cn <- log(pmax(df$cn, 1e-6))   # log(a-hat), floored to avoid -Inf
+log2_cn <- log2(pmax(df$cn_2s, 1e-6))   # log2 of two-sample a-hat
 
 # Rolling window helper (kept for S2/S3 comparison plots)
 roll_stat <- function(x, fun) {
   out <- rep(NA_real_, length(x))
   for (i in seq_along(x)) {
     idx <- max(1, i - HALF) : min(length(x), i + HALF)
-    sub <- x[idx][df$reads[idx] > 0]
+    sub <- x[idx][nz[idx]]
     if (length(sub) >= 5) out[i] <- fun(sub)
   }
   out
 }
 
-df$S1 <- log_cn
-df$S2 <- roll_stat(log_cn, function(x) mean(x, trim = 0.10))
-df$S3 <- roll_stat(log_cn, function(x) huber(x, k = 1.345)$mu)
+df$S1 <- log2_cn
+df$S2 <- roll_stat(log2_cn, function(x) mean(x, trim = 0.10))
+df$S3 <- roll_stat(log2_cn, function(x) huber(x, k = 1.345)$mu)
 ```
 
 ```{r stat-distributions, fig.width=11, fig.height=4, dev="png", dpi=180}
 par(mfrow = c(1, 3), mar = c(4, 3.5, 2.5, 1))
 stats <- list(
-  list(v = df$S1[nz], lab = "S1: log(a-hat)  (per bin)"),
-  list(v = df$S2[nz & !is.na(df$S2)], lab = "S2: trimmed mean of log(a-hat)"),
-  list(v = df$S3[nz & !is.na(df$S3)], lab = "S3: Huber of log(a-hat)")
+  list(v = df$S1[nz], lab = "S1: log2(a-hat)  (per bin)"),
+  list(v = df$S2[nz & !is.na(df$S2)], lab = "S2: trimmed mean of log2(a-hat)"),
+  list(v = df$S3[nz & !is.na(df$S3)], lab = "S3: Huber of log2(a-hat)")
 )
 cols <- c("#555555", "#56B4E9", "#009E73")
 
@@ -148,27 +168,37 @@ This ensures that not just the bin itself, but the entire surrounding region, is
 Bins at CN-event boundaries -- even if their own value happens to be near 1 -- are excluded because their neighbours reveal the disruption.
 Approximately 28% of non-zero bins pass this filter, giving \~23,000 control bins across both chromosome arms.
 
-**How we model** $H_0$ -- no distributional assumption.
-We do not assume a parametric form for $H_0$.
-The $\log(\hat{a}_k)$ values of the selected control bins *are* the empirical null distribution -- a direct sample from the distribution of the statistic when CN = 1.
-The QQ plot below shows this distribution is approximately normal, which provides a useful consistency check, but we do not rely on that assumption.
+**How we model** $H_0$.
+The $\log_2(\hat{a}_k)$ values of the selected control bins are a direct sample from the distribution of the statistic when CN = 1 -- we use them directly as the empirical null, without assuming any parametric form.
+The histograms and QQ plots below characterise this distribution for each of the three candidate statistics.
 
-**How p-values are derived (Part C).** For any test bin $k$ with statistic value $T_k = \log(\hat{a}_k)$, the two-sided empirical p-value is: $$p_k = \frac{\bigl|\{j \in \text{ctrl} : |T_j| \geq |T_k|\}\bigr|}{|\text{ctrl}|}$$ This is entirely assumption-free: we count what fraction of the null distribution is at least as extreme as the observed value.
-With \~23,000 control bins, p-values down to $\approx 4 \times 10^{-5}$ are directly estimable, which provides sufficient resolution for testing at $\alpha = 0.01$ even after multiple testing correction.
+**How p-values are derived (Part C).** For any test bin $k$ with statistic value $T_k$, the two-sided empirical p-value is the fraction of null values at least as extreme: $$p_k = \frac{\bigl|\{j \in \text{ctrl} : |T_j| \geq |T_k|\}\bigr|}{|\text{ctrl}|}$$ With \$\sim\$23,000 control bins this resolves p-values down to $\approx 4 \times 10^{-5}$, sufficient for testing at $\alpha = 0.01$ after multiple testing correction.
+No normality assumption is required.
 
 ```{r neg-ctrl}
-win_med_log <- roll_stat(log_cn, median)
-win_sd_log  <- roll_stat(log_cn, sd)
-stratB <- nz & !is.na(win_med_log) & !is.na(win_sd_log) &
+# Stability filter is defined on the healthy sample's log2 CN (single-sample)
+log2_cn_h <- log2(pmax(df_h$cn, 1e-6))
+roll_stat_h <- function(x, fun) {
+  out <- rep(NA_real_, length(x))
+  for (i in seq_along(x)) {
+    idx <- max(1, i - HALF) : min(length(x), i + HALF)
+    sub <- x[idx][nz_h[idx]]
+    if (length(sub) >= 5) out[i] <- fun(sub)
+  }
+  out
+}
+win_med_log <- roll_stat_h(log2_cn_h, median)
+win_sd_log  <- roll_stat_h(log2_cn_h, sd)
+stratB <- nz_h & !is.na(win_med_log) & !is.na(win_sd_log) &
           abs(win_med_log) <= 0.095 & win_sd_log <= 0.14
 
 cat(sprintf("Strategy B (local stability): %d bins (%.0f%% of non-zero)\n",
-            sum(stratB), 100 * sum(stratB) / sum(nz)))
+            sum(stratB), 100 * sum(stratB) / sum(nz_h)))
 ```
 
 ```{r null-dist-plot, fig.width=12, fig.height=8, dev="png", dpi=180}
 stat_list_b <- list(S1 = df$S1, S2 = df$S2, S3 = df$S3)
-stat_labs_b <- c("S1: log(a-hat)", "S2: trimmed mean", "S3: Huber")
+stat_labs_b <- c("S1: log2(a-hat)", "S2: trimmed mean", "S3: Huber")
 cols_b      <- c("#555555", "#56B4E9", "#009E73")
 
 par(mfrow = c(2, 3), mar = c(4, 3.5, 2.5, 1))
@@ -176,12 +206,14 @@ par(mfrow = c(2, 3), mar = c(4, 3.5, 2.5, 1))
 for (ti in 1:3) {
   mask <- stratB & !is.na(stat_list_b[[ti]])
   v    <- stat_list_b[[ti]][mask]
-  vc   <- pmin(pmax(v, -0.8), 0.8)
-  hist(vc, breaks = 80, freq = FALSE,
-       col = adjustcolor(cols_b[ti], 0.6), border = NA,
+  xlim <- c(-2, 2)
+  xseq <- seq(xlim[1], xlim[2], length.out = 300)
+  h    <- hist(v, breaks = 80, plot = FALSE)
+  plot(h, freq = FALSE, col = adjustcolor(cols_b[ti], 0.6), border = NA,
        main = sprintf("Null: Strategy B, %s", stat_labs_b[ti]),
-       xlab = "Statistic under H0", xlim = c(-0.8, 0.8), cex.main = 0.85)
-  abline(v = 0, col = "red", lwd = 2, lty = 2)
+       xlab = "Statistic under H0", xlim = xlim, cex.main = 0.85)
+  abline(v = 0, col = "red", lwd = 1.5, lty = 2)
+  lines(xseq, dnorm(xseq, mean(v), sd(v)), col = "black", lwd = 2)
   legend("topright", bty = "n", cex = 0.78,
          legend = sprintf("n=%d\nSD=%.4f\nMAD=%.4f", length(v), sd(v), mad(v)))
 }
@@ -196,10 +228,10 @@ for (ti in 1:3) {
 }
 ```
 
-The histograms and QQ plots show all three statistics under Strategy B.
-S2 and S3 are visibly over-compressed: their QQ plots bend inward at the tails, a sign that the robust aggregation is artificially removing tail variation that should be present under $H_0$.
-S1 (plain $\log(\hat{a}_k)$) has the most linear QQ plot -- the closest to the true null behaviour -- and is therefore our chosen statistic.
-The slight remaining tail deviation in S1 is why we use the empirical p-value route rather than a parametric z-score.
+The histograms are shown with a fitted normal overlay (black line) for reference, and the QQ plots assess normality directly.
+S2 and S3 are visibly over-compressed: their distributions are too narrow and their QQ plots bend inward at the tails, a consequence of applying robust aggregation on top of bins already filtered for stability.
+With the two-sample estimator, none of the three null distributions is close enough to normal to justify a parametric z-score, so we use the empirical p-value route for all three.
+All three statistics are carried forward to Part C for comparison; the final choice is deferred until we see their performance on the full chromosome.
 
 ------------------------------------------------------------------------
 
