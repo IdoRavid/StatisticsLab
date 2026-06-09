@@ -1,0 +1,180 @@
+---
+title: "HW9"
+author: "Group 12 - Shir, Omer & Ido"
+date: "16/06/26"
+output:
+  pdf_document:
+    latex_engine: xelatex
+    extra_dependencies: ["fvextra"]
+  html_document:
+    code_folding: show
+header-includes:
+  - \DefineVerbatimEnvironment{Highlighting}{Verbatim}{breaklines,commandchars=\\\{\}}
+editor_options:
+  markdown:
+    wrap: sentence
+---
+
+### Group:
+
+Group members (Name, ID, email)
+
+-   Ido Ravid, 207198177, ido.ravid\@mail.huji.ac.il
+
+-   Omer Sutovsky, 318735107 ,omer.sutovsky\@mail.huji.ac.il
+
+-   Shir Tsarfaty, 207718008, shir.tsarfaty\@mail.huji.ac.il
+
+
+```{r cnv-detection-function}
+library(data.table)
+
+# Main pipeline to detect copy number variations across the chromosome
+find_cnv_regions <- function(data_df, signal_vector, ctrl_start, ctrl_end, alpha = 0.01) {
+  
+  # Set up a clean working table so we don't mess up our original data
+  working_dt <- data.table(chrom_pos = data_df$pos, cn_ratio = signal_vector)
+  
+  # Part B: Estimate baseline parameters from the negative control region
+  is_control <- working_dt$chrom_pos >= ctrl_start & working_dt$chrom_pos <= ctrl_end
+  control_values <- working_dt$cn_ratio[is_control]
+  control_values <- control_values[is.finite(control_values)] 
+  
+  baseline_mean <- mean(control_values)
+  baseline_sd   <- sd(control_values)
+  
+  # Part C: Calculate standard Z-scores and two-sided p-values 
+  z_scores <- (working_dt$cn_ratio - baseline_mean) / baseline_sd
+  working_dt[, p_val := 2 * pnorm(-abs(z_scores))]
+  
+  # Part D: Track raw significance before any adjustments
+  working_dt[, is_sig_raw := p_val < alpha]
+  raw_significant_bins <- sum(working_dt$is_sig_raw, na.rm = TRUE)
+  
+  # Parts E, F: Control the FDR using the Benjamini-Hochberg correction 
+  working_dt[, p_adj := p.adjust(p_val, method = "BH")]
+  working_dt[, is_sig_adj := p_adj < alpha]
+  adj_significant_bins <- sum(working_dt$is_sig_adj, na.rm = TRUE)
+  
+  # Determine if the change is a deletion or amplification relative to baseline
+  working_dt[, change_type := ifelse(cn_ratio > baseline_mean, "Gain (CN > 1)", "Loss (CN < 1)")]
+  
+  # Part G: Group adjacent significant windows into single continuous events 
+  working_dt[, event_id := rleid(is_sig_adj, change_type)]
+  
+  significant_segments <- working_dt[is_sig_adj == TRUE, .(
+    start_mb  = min(chrom_pos) / 1e6,
+    end_mb    = max(chrom_pos) / 1e6,
+    size_kb   = (max(chrom_pos) - min(chrom_pos)) / 1e3,
+    mean_ratio = mean(cn_ratio),
+    top_p_adj  = min(p_adj),
+    event      = unique(change_type)
+  ), by = event_id]
+  
+  significant_segments[, event_id := NULL] 
+  
+  # Build the interactive map if plotly is available
+  interactive_map <- NULL
+  if (requireNamespace("plotly", quietly = TRUE)) {
+    library(plotly)
+    
+    working_dt[, map_color := "Normal"]
+    working_dt[is_sig_adj == TRUE & cn_ratio > baseline_mean, map_color := "Gain"]
+    working_dt[is_sig_adj == TRUE & cn_ratio <= baseline_mean, map_color := "Loss"]
+    
+    interactive_map <- plot_ly(
+      data = working_dt, x = ~chrom_pos / 1e6, y = ~cn_ratio, 
+      type = 'scatter', mode = 'markers', color = ~map_color, 
+      colors = c("Normal" = rgb(0,0,0,0.15), "Gain" = "red", "Loss" = "blue"),
+      marker = list(size = 4),
+      text = ~sprintf("Position: %.3f Mb\nRatio: %.3f\np-adj: %.3e", chrom_pos/1e6, cn_ratio, p_adj)
+    ) %>%
+    layout(
+      title = "Chromosomal Copy Number Alteration Profiles",
+      xaxis = list(title = "Genomic Position (Mb)"),
+      yaxis = list(title = "Robust Copy Number Metric"),
+      showlegend = TRUE
+    )
+  }
+  
+  # Package our results nicely for the markdown chunks below
+  return(list(
+    stats_summary = data.frame(
+      Metric = c("Control Region Mean", "Control Region SD", "Significant Bins (Raw)", "Significant Bins (BH Adjusted)"),
+      Value  = c(round(baseline_mean, 4), round(baseline_sd, 4), raw_significant_bins, adj_significant_bins)
+    ),
+    segments_table = significant_segments,
+    plot = interactive_map
+  ))
+}
+```
+
+
+```{r run-cnv-pipeline}
+# Boundaries for our flanking negative control zone (known normal region)
+control_start_mb <- 25e6
+control_end_mb   <- 28e6
+
+# 1. Apply a rolling median window (k=5) to eliminate single-bin noise
+smoothed_ratio <- runmed(d_hat, k = 5)
+
+# 2. Transform to log2 space to stabilize variance and center normal cells at 0
+# We add a tiny offset (eps) to prevent log2(0) if any bins are completely empty
+eps_log <- 1e-4
+robust_log2_statistic <- log2(smoothed_ratio + eps_log)
+
+# Execute our generic pipeline using this robust log2 statistic
+cnv_results <- find_cnv_regions(
+  data_df = df_t, 
+  signal_vector = robust_log2_statistic, 
+  ctrl_start = control_start_mb, 
+  ctrl_end = control_end_mb, 
+  alpha = 0.01
+)
+```
+
+
+```{r run-cnv-pipeline}
+# Boundaries for our flanking negative control zone
+control_start_mb <- 25e6
+control_end_mb   <- 28e6
+
+# Group nearby cells together using a rolling median window to cut single-cell noise
+# Using k = 5 implements the required small-group robust smoothing factor
+robust_smooth_ratio <- runmed(d_hat, k = 5)
+
+# Execute the generic setup function using BH adjustment
+cnv_results <- find_cnv_regions(
+  data_df = df_t, 
+  signal_vector = robust_smooth_ratio, 
+  ctrl_start = control_start_mb, 
+  ctrl_end = control_end_mb, 
+  alpha = 0.01
+)
+```
+
+
+```{r show-stats-summary}
+# Display background noise parameters and before/after significance counts
+knitr::kable(
+  cnv_results$stats_summary, 
+  caption = "Baseline Control Parameters and False Discovery Rate Correction Comparison"
+)
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+
+
+```{r show-final-cnvs}
+# Table showing continuous blocks of genomic alterations
+knitr::kable(
+  cnv_results$segments_table, 
+  caption = "Contiguous Chromosomal Segments Flagged with Significant Copy Number Alterations"
+)
+
+# Render the interactive zoom/pan coordinate plot canvas
+cnv_results$plot
