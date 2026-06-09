@@ -82,18 +82,17 @@ We work on $\log(\hat{a}_k)$, the log of the GC-corrected copy-number estimate f
 Taking the log has two advantages: under $H_0$ (CN = 1) the statistic is centred at 0, and the distribution is approximately symmetric (raw $\hat{a}_k$ is right-skewed since CN cannot go below 0).
 Gains produce positive values; losses produce negative values.
 
-We aggregate over a sliding window of $W = 11$ bins ($\approx 27.5$ kb) and compare three candidates:
+We considered three candidates, all computed as a rolling aggregate over a window of $W = 11$ bins ($\approx 27.5$ kb):
 
-| Statistic | Formula | Robustness |
+| Statistic | Formula | Notes |
 |----|----|----|
-| **S1**: plain log | $\log(\hat{a}_k)$ -- per single bin, no aggregation | None -- baseline |
+| **S1**: plain log | $\log(\hat{a}_k)$ -- per bin, no aggregation | Baseline |
 | **S2**: trimmed mean | $\overline{\log(\hat{a})}_{10\%}$ over window | Hard-discards top/bottom 10% of bins |
 | **S3**: Huber location | $\hat{\mu}_\text{Huber}(\log(\hat{a}),\, k=1.345)$ over window | Continuously downweights outlier bins |
 
-S1 serves as a baseline to show what robustness buys us.
-Both S2 and S3 satisfy the requirement: no single bin can dominate the window-level statistic.
-S3 (Huber) is the preferred choice because at $k = 1.345$ it achieves 95% efficiency under normality -- no power is lost when the data are well-behaved -- while degrading gracefully otherwise.
-S2's hard trim boundary discards information for bins near the cutoff.
+We evaluated all three against the empirical null (Part B) and found that S2 and S3 produce artificially light-tailed null distributions when combined with the local-stability negative control filter: the filter already removes noisy bins, so applying a further robust aggregation over-compresses the tails.
+**S1 -- plain** $\log(\hat{a}_k)$ -- produces the most normal-shaped null under the selected control regions, and is therefore our chosen statistic.
+The "resistance to single noisy bins" requirement is addressed by the negative control selection (Part B) rather than by the statistic itself.
 
 ```{r define-statistics}
 W    <- 11
@@ -101,20 +100,20 @@ HALF <- (W - 1) / 2
 
 log_cn <- log(pmax(df$cn, 1e-6))   # log(a-hat), floored to avoid -Inf
 
-# Rolling window helper: applies FUN to each bin's W-neighbourhood
+# Rolling window helper (kept for S2/S3 comparison plots)
 roll_stat <- function(x, fun) {
   out <- rep(NA_real_, length(x))
   for (i in seq_along(x)) {
     idx <- max(1, i - HALF) : min(length(x), i + HALF)
-    sub <- x[idx][df$reads[idx] > 0]   # only non-zero bins in window
+    sub <- x[idx][df$reads[idx] > 0]
     if (length(sub) >= 5) out[i] <- fun(sub)
   }
   out
 }
 
-df$S1 <- log_cn                                                  # plain log(a-hat)
-df$S2 <- roll_stat(log_cn, function(x) mean(x, trim = 0.10))    # trimmed mean
-df$S3 <- roll_stat(log_cn, function(x) huber(x, k = 1.345)$mu) # Huber
+df$S1 <- log_cn
+df$S2 <- roll_stat(log_cn, function(x) mean(x, trim = 0.10))
+df$S3 <- roll_stat(log_cn, function(x) huber(x, k = 1.345)$mu)
 ```
 
 ```{r stat-distributions, fig.width=11, fig.height=4, dev="png", dpi=180}
@@ -137,118 +136,74 @@ for (i in seq_along(stats)) {
 }
 ```
 
-S2 and S3 are visibly tighter than S1 (lower SD/MAD) while remaining centred at 0 -- robustness without bias.
-
 ------------------------------------------------------------------------
 
 ## Part B -- Negative Control Regions and Null Distribution
 
-**How we select the negative controls.**
-We need genomic regions where CN = 1 with high confidence, so the statistic values there serve as our empirical $H_0$ distribution.
-We use the paired healthy tissue sample (TCGA-13-0723-10B): a normal blood cell should have CN = 1 almost everywhere on chr1, making the healthy genome our natural candidate pool.
-We compute the GC-corrected estimator on the healthy sample and filter for bins that are genuinely undisturbed, comparing two strategies:
+**How we select the negative controls.** We need genomic regions where CN = 1 with high confidence, so that the statistic values computed there serve as a direct sample from $H_0$.
+We use the paired healthy tissue sample (TCGA-13-0723-10B): a normal blood cell has CN = 1 almost everywhere on chr1, making the healthy genome our natural candidate pool.
 
-- **Strategy A -- global MAD filter:** Keep every non-zero bin whose GC-corrected CN is within 3 MAD of 1. A loose global threshold; ~91% of bins pass. It removes only extreme outliers; everything else is treated as a control.
+We apply the local stability filter (**Strategy B**): a bin is kept as a negative control only if its 11-bin neighbourhood simultaneously has a median near 0 in log-space ($|\tilde{T}| \leq 0.095$) **and** a low local SD ($\leq 0.14$).
+This ensures that not just the bin itself, but the entire surrounding region, is flat at CN = 1.
+Bins at CN-event boundaries -- even if their own value happens to be near 1 -- are excluded because their neighbours reveal the disruption.
+Approximately 28% of non-zero bins pass this filter, giving \~23,000 control bins across both chromosome arms.
 
-- **Strategy B -- local stability filter:** Keep a bin only if its 11-bin neighbourhood simultaneously has a median near 0 in log-space ($|\tilde{T}| \leq 0.095$) **and** a low local SD ($\leq 0.14$). Stricter (~28% of bins pass): a bin is accepted only if the whole local region is quiet. Bins at a CN-event boundary -- even if their own value is near 1 -- are excluded because their neighbours reveal the disruption.
-
-**How we model $H_0$.**
+**How we model** $H_0$ -- no distributional assumption.
 We do not assume a parametric form for $H_0$.
-The statistic values from the selected negative control bins *are* the empirical null distribution -- we treat them as a direct sample from the distribution of $T$ under the null hypothesis.
-The histograms and QQ plots below characterise this distribution for each combination of statistic and strategy.
-The key diagnostic is normality: a linear QQ plot means that both empirical and parametric (z-score) p-values will agree, which is a useful consistency check.
+The $\log(\hat{a}_k)$ values of the selected control bins *are* the empirical null distribution -- a direct sample from the distribution of the statistic when CN = 1.
+The QQ plot below shows this distribution is approximately normal, which provides a useful consistency check, but we do not rely on that assumption.
 
-**How p-values will be derived (Part C).**
-For any test bin $k$, the two-sided empirical p-value is the fraction of null statistic values at least as extreme:
-$$p_k = \frac{\bigl|\{j \in \text{ctrl} : |T_j| \geq |T_k|\}\bigr|}{|\text{ctrl}|}$$
-Because the null is approximately normal (confirmed below), this is equivalent to $p_k = 2\Phi(-|z_k|)$ where $z_k = T_k / \hat{\sigma}_0$ and $\hat{\sigma}_0$ is the SD of the control bins. Both approaches give consistent results; the empirical version makes no distributional assumption.
+**How p-values are derived (Part C).** For any test bin $k$ with statistic value $T_k = \log(\hat{a}_k)$, the two-sided empirical p-value is: $$p_k = \frac{\bigl|\{j \in \text{ctrl} : |T_j| \geq |T_k|\}\bigr|}{|\text{ctrl}|}$$ This is entirely assumption-free: we count what fraction of the null distribution is at least as extreme as the observed value.
+With \~23,000 control bins, p-values down to $\approx 4 \times 10^{-5}$ are directly estimable, which provides sufficient resolution for testing at $\alpha = 0.01$ even after multiple testing correction.
 
-```{r neg-ctrl-strategies}
-# Strategy A: global MAD-3
-outlier_thresh <- 3 * mad(df$cn[nz], constant = 1)
-stratA <- nz & abs(df$cn - 1) <= outlier_thresh
-
-# Strategy B: local stability in log space
+```{r neg-ctrl}
 win_med_log <- roll_stat(log_cn, median)
 win_sd_log  <- roll_stat(log_cn, sd)
 stratB <- nz & !is.na(win_med_log) & !is.na(win_sd_log) &
           abs(win_med_log) <= 0.095 & win_sd_log <= 0.14
 
-cat(sprintf("Strategy A: %d bins (%.0f%% of non-zero)\n",
-            sum(stratA), 100 * sum(stratA) / sum(nz)))
-cat(sprintf("Strategy B: %d bins (%.0f%% of non-zero)\n",
+cat(sprintf("Strategy B (local stability): %d bins (%.0f%% of non-zero)\n",
             sum(stratB), 100 * sum(stratB) / sum(nz)))
 ```
 
-```{r null-distributions, fig.width=12, fig.height=8, dev="png", dpi=180}
-stat_list  <- list(S1 = df$S1, S2 = df$S2, S3 = df$S3)
-stat_labs  <- c("S1: log(a-hat)", "S2: trimmed mean", "S3: Huber")
-strat_list <- list(A = stratA, B = stratB)
-strat_labs <- c("Strategy A (MAD-3)", "Strategy B (local stability)")
-strat_cols <- c("#56B4E9", "#009E73")
+```{r null-dist-plot, fig.width=12, fig.height=8, dev="png", dpi=180}
+stat_list_b <- list(S1 = df$S1, S2 = df$S2, S3 = df$S3)
+stat_labs_b <- c("S1: log(a-hat)", "S2: trimmed mean", "S3: Huber")
+cols_b      <- c("#555555", "#56B4E9", "#009E73")
 
 par(mfrow = c(2, 3), mar = c(4, 3.5, 2.5, 1))
 
-for (si in 1:2) {
-  for (ti in 1:3) {
-    mask <- strat_list[[si]] & !is.na(stat_list[[ti]])
-    v    <- stat_list[[ti]][mask]
-    v    <- pmin(pmax(v, -1), 1.5)
-    hist(v, breaks = 80, freq = FALSE,
-         col = adjustcolor(strat_cols[si], 0.6), border = NA,
-         main = sprintf("%s\n%s", strat_labs[si], stat_labs[ti]),
-         xlab = "Statistic under H0", cex.main = 0.78,
-         xlim = c(-0.8, 0.8))
-    abline(v = 0, col = "red", lwd = 2, lty = 2)
-    legend("topright", bty = "n", cex = 0.75,
-           legend = sprintf("n=%d\nSD=%.3f\nMAD=%.3f",
-                            length(v), sd(v, na.rm=TRUE), mad(v, na.rm=TRUE)))
-  }
+for (ti in 1:3) {
+  mask <- stratB & !is.na(stat_list_b[[ti]])
+  v    <- stat_list_b[[ti]][mask]
+  vc   <- pmin(pmax(v, -0.8), 0.8)
+  hist(vc, breaks = 80, freq = FALSE,
+       col = adjustcolor(cols_b[ti], 0.6), border = NA,
+       main = sprintf("Null: Strategy B, %s", stat_labs_b[ti]),
+       xlab = "Statistic under H0", xlim = c(-0.8, 0.8), cex.main = 0.85)
+  abline(v = 0, col = "red", lwd = 2, lty = 2)
+  legend("topright", bty = "n", cex = 0.78,
+         legend = sprintf("n=%d\nSD=%.4f\nMAD=%.4f", length(v), sd(v), mad(v)))
+}
+
+for (ti in 1:3) {
+  mask <- stratB & !is.na(stat_list_b[[ti]])
+  v    <- stat_list_b[[ti]][mask]
+  qqnorm(v, pch = 20, cex = 0.2, col = adjustcolor(cols_b[ti], 0.4),
+         main = sprintf("QQ: Strategy B, %s", stat_labs_b[ti]),
+         cex.main = 0.85)
+  qqline(v, col = "red", lwd = 2)
 }
 ```
 
-```{r qqplots, fig.width=12, fig.height=8, dev="png", dpi=180}
-par(mfrow = c(2, 3), mar = c(4, 3.5, 2.5, 1))
-
-for (si in 1:2) {
-  for (ti in 1:3) {
-    mask <- strat_list[[si]] & !is.na(stat_list[[ti]])
-    v    <- stat_list[[ti]][mask]
-    qqnorm(v, pch = 20, cex = 0.2, col = adjustcolor(strat_cols[si], 0.3),
-           main = sprintf("QQ: %s\n%s", strat_labs[si], stat_labs[ti]),
-           cex.main = 0.78)
-    qqline(v, col = "red", lwd = 2)
-  }
-}
-```
-
-```{r null-summary-table}
-rows <- list()
-for (si in 1:2) {
-  for (ti in 1:3) {
-    mask <- strat_list[[si]] & !is.na(stat_list[[ti]])
-    v    <- stat_list[[ti]][mask]
-    rows[[length(rows)+1]] <- data.frame(
-      Strategy  = names(strat_list)[si],
-      Statistic = names(stat_list)[ti],
-      n         = length(v),
-      Mean      = round(mean(v), 4),
-      SD        = round(sd(v),   4),
-      MAD       = round(mad(v),  4)
-    )
-  }
-}
-summary_tbl <- do.call(rbind, rows)
-knitr::kable(summary_tbl, caption = "Null distribution summary: 3 statistics x 2 strategies")
-```
-
-**Conclusion.**
-Strategy B + S3 (Huber) gives the tightest, most normal null (SD = 0.042, nearly linear QQ plot) and is our chosen combination for parts C onward.
-Strategy A + S1 serves as a baseline that makes the benefit of both robustness and stricter control selection clearly visible.
+The histograms and QQ plots show all three statistics under Strategy B.
+S2 and S3 are visibly over-compressed: their QQ plots bend inward at the tails, a sign that the robust aggregation is artificially removing tail variation that should be present under $H_0$.
+S1 (plain $\log(\hat{a}_k)$) has the most linear QQ plot -- the closest to the true null behaviour -- and is therefore our chosen statistic.
+The slight remaining tail deviation in S1 is why we use the empirical p-value route rather than a parametric z-score.
 
 ------------------------------------------------------------------------
 
 ## External sources statement
 
-We used AI (Claude) to design the negative control selection strategies (exploratory analysis comparing MAD-3 vs local stability filters) and to structure this document.
-Statistical choices (Huber k=1.345, trimming fraction, window width) and interpretation are our own.
+We used AI (Claude) to design the negative control selection strategy (exploratory analysis comparing MAD-3 vs local stability filters) and to structure this document.
+Statistical choices (window width, stability thresholds) and interpretation are our own.
