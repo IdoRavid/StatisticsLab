@@ -25,156 +25,230 @@ Group members (Name, ID, email)
 
 -   Shir Tsarfaty, 207718008, shir.tsarfaty\@mail.huji.ac.il
 
+------------------------------------------------------------------------
 
-```{r cnv-detection-function}
-library(data.table)
+### Paths and Data
 
-# Main pipeline to detect copy number variations across the chromosome
-find_cnv_regions <- function(data_df, signal_vector, ctrl_start, ctrl_end, alpha = 0.01) {
-  
-  # Set up a clean working table so we don't mess up our original data
-  working_dt <- data.table(chrom_pos = data_df$pos, cn_ratio = signal_vector)
-  
-  # Part B: Estimate baseline parameters from the negative control region
-  is_control <- working_dt$chrom_pos >= ctrl_start & working_dt$chrom_pos <= ctrl_end
-  control_values <- working_dt$cn_ratio[is_control]
-  control_values <- control_values[is.finite(control_values)] 
-  
-  baseline_mean <- mean(control_values)
-  baseline_sd   <- sd(control_values)
-  
-  # Part C: Calculate standard Z-scores and two-sided p-values 
-  z_scores <- (working_dt$cn_ratio - baseline_mean) / baseline_sd
-  working_dt[, p_val := 2 * pnorm(-abs(z_scores))]
-  
-  # Part D: Track raw significance before any adjustments
-  working_dt[, is_sig_raw := p_val < alpha]
-  raw_significant_bins <- sum(working_dt$is_sig_raw, na.rm = TRUE)
-  
-  # Parts E, F: Control the FDR using the Benjamini-Hochberg correction 
-  working_dt[, p_adj := p.adjust(p_val, method = "BH")]
-  working_dt[, is_sig_adj := p_adj < alpha]
-  adj_significant_bins <- sum(working_dt$is_sig_adj, na.rm = TRUE)
-  
-  # Determine if the change is a deletion or amplification relative to baseline
-  working_dt[, change_type := ifelse(cn_ratio > baseline_mean, "Gain (CN > 1)", "Loss (CN < 1)")]
-  
-  # Part G: Group adjacent significant windows into single continuous events 
-  working_dt[, event_id := rleid(is_sig_adj, change_type)]
-  
-  significant_segments <- working_dt[is_sig_adj == TRUE, .(
-    start_mb  = min(chrom_pos) / 1e6,
-    end_mb    = max(chrom_pos) / 1e6,
-    size_kb   = (max(chrom_pos) - min(chrom_pos)) / 1e3,
-    mean_ratio = mean(cn_ratio),
-    top_p_adj  = min(p_adj),
-    event      = unique(change_type)
-  ), by = event_id]
-  
-  significant_segments[, event_id := NULL] 
-  
-  # Build the interactive map if plotly is available
-  interactive_map <- NULL
-  if (requireNamespace("plotly", quietly = TRUE)) {
-    library(plotly)
-    
-    working_dt[, map_color := "Normal"]
-    working_dt[is_sig_adj == TRUE & cn_ratio > baseline_mean, map_color := "Gain"]
-    working_dt[is_sig_adj == TRUE & cn_ratio <= baseline_mean, map_color := "Loss"]
-    
-    interactive_map <- plot_ly(
-      data = working_dt, x = ~chrom_pos / 1e6, y = ~cn_ratio, 
-      type = 'scatter', mode = 'markers', color = ~map_color, 
-      colors = c("Normal" = rgb(0,0,0,0.15), "Gain" = "red", "Loss" = "blue"),
-      marker = list(size = 4),
-      text = ~sprintf("Position: %.3f Mb\nRatio: %.3f\np-adj: %.3e", chrom_pos/1e6, cn_ratio, p_adj)
-    ) %>%
-    layout(
-      title = "Chromosomal Copy Number Alteration Profiles",
-      xaxis = list(title = "Genomic Position (Mb)"),
-      yaxis = list(title = "Robust Copy Number Metric"),
-      showlegend = TRUE
-    )
+```{r setup, message=FALSE, warning=FALSE}
+if (!require('data.table')) { install.packages('data.table'); library('data.table') }
+if (!require('splines'))    { install.packages('splines');    library('splines') }
+if (!require('MASS'))       { install.packages('MASS');       library('MASS') }
+
+source("../utils.R")
+source("../lab5/lab5_utils.R")
+
+healthy_file <- "../lab2/data/TCGA-13-0723-10B_lib2_all_chr1.forward"
+chr1_file    <- "../lab1/data/chr1_str.rda"
+```
+
+```{r load-data, cache=TRUE}
+healthy_reads <- fread(healthy_file, col.names = c("Chr", "Loc", "Length"))
+load(chr1_file)
+```
+
+```{r bin-and-correct, cache=TRUE}
+BIN <- 2500
+
+# Two arms around centromere (120-130 Mb excluded)
+dfA <- bin_data(healthy_reads, chr1, 5000001L,   119990000L, BIN)
+dfB <- bin_data(healthy_reads, chr1, 130000001L, 242000000L, BIN)
+
+add_pos <- function(df, beg) {
+  df$pos <- beg + (seq_len(nrow(df)) - 1) * BIN + BIN / 2
+  df
+}
+dfA <- add_pos(dfA, 5000001L)
+dfB <- add_pos(dfB, 130000001L)
+df  <- rbind(dfA, dfB)
+
+# GC spline + plug-in estimator (same as lab 8 method b)
+eps  <- 1
+nz   <- df$reads > 0
+fit  <- fit_gc_spline(df[nz, ])
+fhat <- pmax(predict(fit, data.frame(gc = df$gc)), 0)
+raw  <- (df$reads + eps) / (fhat + eps)
+df$cn <- raw / median(raw[nz])
+
+cat(sprintf("Total bins: %d  |  non-zero: %d\n", nrow(df), sum(nz)))
+```
+
+------------------------------------------------------------------------
+
+## Part A -- Test Statistic
+
+We need a statistic $T$ that summarises whether a genomic region has more or fewer reads than expected under copy number 1, while being **resistant to single noisy bins** -- meaning one extreme bin should not be able to drive the entire region to significance on its own.
+
+We work on $\log(\hat{a}_k)$, the log of the GC-corrected copy-number estimate from Lab 8 (method b, single-sample spline correction).
+Taking the log has two advantages: under $H_0$ (CN = 1) the statistic is centred at 0, and the distribution is approximately symmetric (raw $\hat{a}_k$ is right-skewed since CN cannot go below 0).
+Gains produce positive values; losses produce negative values.
+
+We aggregate over a sliding window of $W = 11$ bins ($\approx 27.5$ kb) and compare three candidates:
+
+| Statistic | Formula | Robustness |
+|----|----|----|
+| **S1**: plain log | $\log(\hat{a}_k)$ -- per single bin, no aggregation | None -- baseline |
+| **S2**: trimmed mean | $\overline{\log(\hat{a})}_{10\%}$ over window | Hard-discards top/bottom 10% of bins |
+| **S3**: Huber location | $\hat{\mu}_\text{Huber}(\log(\hat{a}),\, k=1.345)$ over window | Continuously downweights outlier bins |
+
+S1 serves as a baseline to show what robustness buys us.
+Both S2 and S3 satisfy the requirement: no single bin can dominate the window-level statistic.
+S3 (Huber) is the preferred choice because at $k = 1.345$ it achieves 95% efficiency under normality -- no power is lost when the data are well-behaved -- while degrading gracefully otherwise.
+S2's hard trim boundary discards information for bins near the cutoff.
+
+```{r define-statistics}
+W    <- 11
+HALF <- (W - 1) / 2
+
+log_cn <- log(pmax(df$cn, 1e-6))   # log(a-hat), floored to avoid -Inf
+
+# Rolling window helper: applies FUN to each bin's W-neighbourhood
+roll_stat <- function(x, fun) {
+  out <- rep(NA_real_, length(x))
+  for (i in seq_along(x)) {
+    idx <- max(1, i - HALF) : min(length(x), i + HALF)
+    sub <- x[idx][df$reads[idx] > 0]   # only non-zero bins in window
+    if (length(sub) >= 5) out[i] <- fun(sub)
   }
-  
-  # Package our results nicely for the markdown chunks below
-  return(list(
-    stats_summary = data.frame(
-      Metric = c("Control Region Mean", "Control Region SD", "Significant Bins (Raw)", "Significant Bins (BH Adjusted)"),
-      Value  = c(round(baseline_mean, 4), round(baseline_sd, 4), raw_significant_bins, adj_significant_bins)
-    ),
-    segments_table = significant_segments,
-    plot = interactive_map
-  ))
+  out
+}
+
+df$S1 <- log_cn                                                  # plain log(a-hat)
+df$S2 <- roll_stat(log_cn, function(x) mean(x, trim = 0.10))    # trimmed mean
+df$S3 <- roll_stat(log_cn, function(x) huber(x, k = 1.345)$mu) # Huber
+```
+
+```{r stat-distributions, fig.width=11, fig.height=4, dev="png", dpi=180}
+par(mfrow = c(1, 3), mar = c(4, 3.5, 2.5, 1))
+stats <- list(
+  list(v = df$S1[nz], lab = "S1: log(a-hat)  (per bin)"),
+  list(v = df$S2[nz & !is.na(df$S2)], lab = "S2: trimmed mean of log(a-hat)"),
+  list(v = df$S3[nz & !is.na(df$S3)], lab = "S3: Huber of log(a-hat)")
+)
+cols <- c("#555555", "#56B4E9", "#009E73")
+
+for (i in seq_along(stats)) {
+  v <- stats[[i]]$v
+  v <- pmin(pmax(v, -1), 1.5)
+  hist(v, breaks = 100, freq = FALSE, col = adjustcolor(cols[i], 0.6), border = NA,
+       main = stats[[i]]$lab, xlab = "Statistic value", cex.main = 0.85)
+  abline(v = 0, col = "red", lwd = 2, lty = 2)
+  legend("topright", bty = "n", cex = 0.8,
+         legend = sprintf("SD=%.3f\nMAD=%.3f", sd(v, na.rm=TRUE), mad(v, na.rm=TRUE)))
 }
 ```
 
+S2 and S3 are visibly tighter than S1 (lower SD/MAD) while remaining centred at 0 -- robustness without bias.
 
-```{r run-cnv-pipeline}
-# Boundaries for our flanking negative control zone (known normal region)
-control_start_mb <- 25e6
-control_end_mb   <- 28e6
+------------------------------------------------------------------------
 
-# 1. Apply a rolling median window (k=5) to eliminate single-bin noise
-smoothed_ratio <- runmed(d_hat, k = 5)
+## Part B -- Negative Control Regions and Null Distribution
 
-# 2. Transform to log2 space to stabilize variance and center normal cells at 0
-# We add a tiny offset (eps) to prevent log2(0) if any bins are completely empty
-eps_log <- 1e-4
-robust_log2_statistic <- log2(smoothed_ratio + eps_log)
+**How we select the negative controls.**
+We need genomic regions where CN = 1 with high confidence, so the statistic values there serve as our empirical $H_0$ distribution.
+We use the paired healthy tissue sample (TCGA-13-0723-10B): a normal blood cell should have CN = 1 almost everywhere on chr1, making the healthy genome our natural candidate pool.
+We compute the GC-corrected estimator on the healthy sample and filter for bins that are genuinely undisturbed, comparing two strategies:
 
-# Execute our generic pipeline using this robust log2 statistic
-cnv_results <- find_cnv_regions(
-  data_df = df_t, 
-  signal_vector = robust_log2_statistic, 
-  ctrl_start = control_start_mb, 
-  ctrl_end = control_end_mb, 
-  alpha = 0.01
-)
+- **Strategy A -- global MAD filter:** Keep every non-zero bin whose GC-corrected CN is within 3 MAD of 1. A loose global threshold; ~91% of bins pass. It removes only extreme outliers; everything else is treated as a control.
+
+- **Strategy B -- local stability filter:** Keep a bin only if its 11-bin neighbourhood simultaneously has a median near 0 in log-space ($|\tilde{T}| \leq 0.095$) **and** a low local SD ($\leq 0.14$). Stricter (~28% of bins pass): a bin is accepted only if the whole local region is quiet. Bins at a CN-event boundary -- even if their own value is near 1 -- are excluded because their neighbours reveal the disruption.
+
+**How we model $H_0$.**
+We do not assume a parametric form for $H_0$.
+The statistic values from the selected negative control bins *are* the empirical null distribution -- we treat them as a direct sample from the distribution of $T$ under the null hypothesis.
+The histograms and QQ plots below characterise this distribution for each combination of statistic and strategy.
+The key diagnostic is normality: a linear QQ plot means that both empirical and parametric (z-score) p-values will agree, which is a useful consistency check.
+
+**How p-values will be derived (Part C).**
+For any test bin $k$, the two-sided empirical p-value is the fraction of null statistic values at least as extreme:
+$$p_k = \frac{\bigl|\{j \in \text{ctrl} : |T_j| \geq |T_k|\}\bigr|}{|\text{ctrl}|}$$
+Because the null is approximately normal (confirmed below), this is equivalent to $p_k = 2\Phi(-|z_k|)$ where $z_k = T_k / \hat{\sigma}_0$ and $\hat{\sigma}_0$ is the SD of the control bins. Both approaches give consistent results; the empirical version makes no distributional assumption.
+
+```{r neg-ctrl-strategies}
+# Strategy A: global MAD-3
+outlier_thresh <- 3 * mad(df$cn[nz], constant = 1)
+stratA <- nz & abs(df$cn - 1) <= outlier_thresh
+
+# Strategy B: local stability in log space
+win_med_log <- roll_stat(log_cn, median)
+win_sd_log  <- roll_stat(log_cn, sd)
+stratB <- nz & !is.na(win_med_log) & !is.na(win_sd_log) &
+          abs(win_med_log) <= 0.095 & win_sd_log <= 0.14
+
+cat(sprintf("Strategy A: %d bins (%.0f%% of non-zero)\n",
+            sum(stratA), 100 * sum(stratA) / sum(nz)))
+cat(sprintf("Strategy B: %d bins (%.0f%% of non-zero)\n",
+            sum(stratB), 100 * sum(stratB) / sum(nz)))
 ```
 
+```{r null-distributions, fig.width=12, fig.height=8, dev="png", dpi=180}
+stat_list  <- list(S1 = df$S1, S2 = df$S2, S3 = df$S3)
+stat_labs  <- c("S1: log(a-hat)", "S2: trimmed mean", "S3: Huber")
+strat_list <- list(A = stratA, B = stratB)
+strat_labs <- c("Strategy A (MAD-3)", "Strategy B (local stability)")
+strat_cols <- c("#56B4E9", "#009E73")
 
-```{r run-cnv-pipeline}
-# Boundaries for our flanking negative control zone
-control_start_mb <- 25e6
-control_end_mb   <- 28e6
+par(mfrow = c(2, 3), mar = c(4, 3.5, 2.5, 1))
 
-# Group nearby cells together using a rolling median window to cut single-cell noise
-# Using k = 5 implements the required small-group robust smoothing factor
-robust_smooth_ratio <- runmed(d_hat, k = 5)
-
-# Execute the generic setup function using BH adjustment
-cnv_results <- find_cnv_regions(
-  data_df = df_t, 
-  signal_vector = robust_smooth_ratio, 
-  ctrl_start = control_start_mb, 
-  ctrl_end = control_end_mb, 
-  alpha = 0.01
-)
+for (si in 1:2) {
+  for (ti in 1:3) {
+    mask <- strat_list[[si]] & !is.na(stat_list[[ti]])
+    v    <- stat_list[[ti]][mask]
+    v    <- pmin(pmax(v, -1), 1.5)
+    hist(v, breaks = 80, freq = FALSE,
+         col = adjustcolor(strat_cols[si], 0.6), border = NA,
+         main = sprintf("%s\n%s", strat_labs[si], stat_labs[ti]),
+         xlab = "Statistic under H0", cex.main = 0.78,
+         xlim = c(-0.8, 0.8))
+    abline(v = 0, col = "red", lwd = 2, lty = 2)
+    legend("topright", bty = "n", cex = 0.75,
+           legend = sprintf("n=%d\nSD=%.3f\nMAD=%.3f",
+                            length(v), sd(v, na.rm=TRUE), mad(v, na.rm=TRUE)))
+  }
+}
 ```
 
+```{r qqplots, fig.width=12, fig.height=8, dev="png", dpi=180}
+par(mfrow = c(2, 3), mar = c(4, 3.5, 2.5, 1))
 
-```{r show-stats-summary}
-# Display background noise parameters and before/after significance counts
-knitr::kable(
-  cnv_results$stats_summary, 
-  caption = "Baseline Control Parameters and False Discovery Rate Correction Comparison"
-)
-## Including Plots
-
-You can also embed plots, for example:
-
-```{r pressure, echo=FALSE}
-plot(pressure)
+for (si in 1:2) {
+  for (ti in 1:3) {
+    mask <- strat_list[[si]] & !is.na(stat_list[[ti]])
+    v    <- stat_list[[ti]][mask]
+    qqnorm(v, pch = 20, cex = 0.2, col = adjustcolor(strat_cols[si], 0.3),
+           main = sprintf("QQ: %s\n%s", strat_labs[si], stat_labs[ti]),
+           cex.main = 0.78)
+    qqline(v, col = "red", lwd = 2)
+  }
+}
 ```
 
+```{r null-summary-table}
+rows <- list()
+for (si in 1:2) {
+  for (ti in 1:3) {
+    mask <- strat_list[[si]] & !is.na(stat_list[[ti]])
+    v    <- stat_list[[ti]][mask]
+    rows[[length(rows)+1]] <- data.frame(
+      Strategy  = names(strat_list)[si],
+      Statistic = names(stat_list)[ti],
+      n         = length(v),
+      Mean      = round(mean(v), 4),
+      SD        = round(sd(v),   4),
+      MAD       = round(mad(v),  4)
+    )
+  }
+}
+summary_tbl <- do.call(rbind, rows)
+knitr::kable(summary_tbl, caption = "Null distribution summary: 3 statistics x 2 strategies")
+```
 
-```{r show-final-cnvs}
-# Table showing continuous blocks of genomic alterations
-knitr::kable(
-  cnv_results$segments_table, 
-  caption = "Contiguous Chromosomal Segments Flagged with Significant Copy Number Alterations"
-)
+**Conclusion.**
+Strategy B + S3 (Huber) gives the tightest, most normal null (SD = 0.042, nearly linear QQ plot) and is our chosen combination for parts C onward.
+Strategy A + S1 serves as a baseline that makes the benefit of both robustness and stricter control selection clearly visible.
 
-# Render the interactive zoom/pan coordinate plot canvas
-cnv_results$plot
+------------------------------------------------------------------------
+
+## External sources statement
+
+We used AI (Claude) to design the negative control selection strategies (exploratory analysis comparing MAD-3 vs local stability filters) and to structure this document.
+Statistical choices (Huber k=1.345, trimming fraction, window width) and interpretation are our own.
