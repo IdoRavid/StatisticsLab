@@ -169,7 +169,7 @@ for (i in seq_along(stats)) {
 **How we select the negative controls.** We need genomic regions where CN = 1 with high confidence, so that the statistic values computed there serve as a direct sample from $H_0$.
 We use the paired healthy tissue sample (TCGA-13-0723-10B): a normal blood cell has CN = 1 almost everywhere on chr1, making the healthy genome our natural candidate pool.
 
-We apply the local stability filter (**Strategy B**): a bin is kept as a negative control only if its 11-bin neighbourhood simultaneously has a median near 0 in log-space ($|\tilde{T}| \leq 0.095$) **and** a low local SD ($\leq 0.14$).
+We apply the local stability filter (**Strategy B**): a bin is kept as a negative control only if its 11-bin neighbourhood simultaneously has a median near 0 in $\log_2$-space ($|\tilde{T}| \leq 0.137$) **and** a low local SD ($\leq 0.202$).
 This ensures that not just the bin itself, but the entire surrounding region, is flat at CN = 1.
 Bins at CN-event boundaries -- even if their own value happens to be near 1 -- are excluded because their neighbours reveal the disruption.
 Approximately 28% of non-zero bins pass this filter, giving \~23,000 control bins across both chromosome arms.
@@ -252,11 +252,13 @@ cols_b      <- c("#555555", "#56B4E9", "#009E73")
 par(mfrow = c(2, 3), mar = c(4, 3.5, 2.5, 1))
 
 for (ti in 1:3) {
-  mask <- stratB & !is.na(stat_list_b[[ti]])
-  v    <- stat_list_b[[ti]][mask]
-  xlim <- c(-2, 2)
-  xseq <- seq(xlim[1], xlim[2], length.out = 300)
-  h    <- hist(v, breaks = 80, plot = FALSE)
+  mask  <- stratB & !is.na(stat_list_b[[ti]])
+  v     <- stat_list_b[[ti]][mask]
+  # xlim: 5 SDs each side so shape is always visible, floor at ±0.5
+  hw    <- max(5 * sd(v), 0.5)
+  xlim  <- c(-hw, hw)
+  xseq  <- seq(xlim[1], xlim[2], length.out = 300)
+  h     <- hist(v, breaks = 80, plot = FALSE)
   plot(h, freq = FALSE, col = adjustcolor(cols_b[ti], 0.6), border = NA,
        main = sprintf("Null: Strategy B, %s", stat_labs_b[ti]),
        xlab = "Statistic under H0", xlim = xlim, cex.main = 0.85)
