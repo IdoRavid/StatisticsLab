@@ -105,7 +105,7 @@ We then take $\log_2(\hat{a}_k)$: under $H_0$ (CN = 1) this is centred at 0, gai
 We considered three candidates, all computed as a rolling aggregate over a window of $W = 11$ bins ($\approx 27.5$ kb):
 
 | Statistic | Formula | Notes |
-|----|----|----|
+|------------------------|------------------------|------------------------|
 | **S1**: plain log$_2$ | $\log_2(\hat{a}_k)$ -- per bin, no aggregation | Baseline |
 | **S2**: trimmed mean | $\overline{\log_2(\hat{a})}_{10\%}$ over window | Hard-discards top/bottom 10% of bins |
 | **S3**: Huber location | $\hat{\mu}_\text{Huber}(\log_2(\hat{a}),\, k=1.345)$ over window | Continuously downweights outlier bins |
@@ -169,7 +169,7 @@ for (i in seq_along(stats)) {
 **How we select the negative controls.** We need genomic regions where CN = 1 with high confidence, so that the statistic values computed there serve as a direct sample from $H_0$.
 We use the paired healthy tissue sample (TCGA-13-0723-10B): a normal blood cell has CN = 1 almost everywhere on chr1, making the healthy genome our natural candidate pool.
 
-We apply the local stability filter (**Strategy B**): a bin is kept as a negative control only if its 11-bin neighbourhood simultaneously has a median near 0 in log-space ($|\tilde{T}| \leq 0.095$) **and** a low local SD ($\leq 0.14$).
+We apply the local stability filter (**Strategy B**): a bin is kept as a negative control only if its 11-bin neighbourhood simultaneously has a median near 0 in $\log_2$-space ($|\tilde{T}| \leq 0.137$) **and** a low local SD ($\leq 0.202$).
 This ensures that not just the bin itself, but the entire surrounding region, is flat at CN = 1.
 Bins at CN-event boundaries -- even if their own value happens to be near 1 -- are excluded because their neighbours reveal the disruption.
 Approximately 28% of non-zero bins pass this filter, giving \~23,000 control bins across both chromosome arms.
@@ -196,7 +196,7 @@ roll_stat_h <- function(x, fun) {
 win_med_log <- roll_stat_h(log2_cn_h, median)
 win_sd_log  <- roll_stat_h(log2_cn_h, sd)
 stratB <- nz_h & !is.na(win_med_log) & !is.na(win_sd_log) &
-          abs(win_med_log) <= 0.095 & win_sd_log <= 0.14
+          abs(win_med_log) <= 0.137 & win_sd_log <= 0.202
 
 cat(sprintf("Strategy B (local stability): %d bins (%.0f%% of non-zero)\n",
             sum(stratB), 100 * sum(stratB) / sum(nz_h)))
