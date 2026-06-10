@@ -105,7 +105,7 @@ We then take $\log_2(\hat{a}_k)$: under $H_0$ (CN = 1) this is centred at 0, gai
 We considered three candidates, all computed as a rolling aggregate over a window of $W = 11$ bins ($\approx 27.5$ kb):
 
 | Statistic | Formula | Notes |
-|------------------------|------------------------|------------------------|
+|----|----|----|
 | **S1**: plain log$_2$ | $\log_2(\hat{a}_k)$ -- per bin, no aggregation | Baseline |
 | **S2**: trimmed mean | $\overline{\log_2(\hat{a})}_{10\%}$ over window | Hard-discards top/bottom 10% of bins |
 | **S3**: Huber location | $\hat{\mu}_\text{Huber}(\log_2(\hat{a}),\, k=1.345)$ over window | Continuously downweights outlier bins |
@@ -169,7 +169,7 @@ for (i in seq_along(stats)) {
 **How we select the negative controls.** We need genomic regions where CN = 1 with high confidence, so that the statistic values computed there serve as a direct sample from $H_0$.
 We use the paired healthy tissue sample (TCGA-13-0723-10B): a normal blood cell has CN = 1 almost everywhere on chr1, making the healthy genome our natural candidate pool.
 
-We apply the local stability filter (**Strategy B**): a bin is kept as a negative control only if its 11-bin neighbourhood simultaneously has a median near 0 in $\log_2$-space ($|\tilde{T}| \leq 0.137$) **and** a low local SD ($\leq 0.202$).
+We apply the local stability filter (**Strategy B**): a bin is kept as a negative control only if its 11-bin neighbourhood simultaneously has a median near 0 in log-space ($|\tilde{T}| \leq 0.095$) **and** a low local SD ($\leq 0.14$).
 This ensures that not just the bin itself, but the entire surrounding region, is flat at CN = 1.
 Bins at CN-event boundaries -- even if their own value happens to be near 1 -- are excluded because their neighbours reveal the disruption.
 Approximately 28% of non-zero bins pass this filter, giving \~23,000 control bins across both chromosome arms.
@@ -200,6 +200,48 @@ stratB <- nz_h & !is.na(win_med_log) & !is.na(win_sd_log) &
 
 cat(sprintf("Strategy B (local stability): %d bins (%.0f%% of non-zero)\n",
             sum(stratB), 100 * sum(stratB) / sum(nz_h)))
+```
+
+```{r negctrl-scatter, fig.width=12, fig.height=4, dev="png", dpi=180}
+# Chromosome-wide scatter: control bins highlighted, excluded in grey
+set.seed(42)
+idx_all <- which(nz_h)
+s       <- sample(idx_all, min(25000, length(idx_all)))
+x_mb    <- df_h$pos[s] / 1e6
+y_cn    <- pmin(log2(pmax(df_h$cn[s], 1e-6)), 3)
+
+col_vec <- ifelse(stratB[s],
+                  adjustcolor("#009E73", 0.5),
+                  adjustcolor("#999999", 0.2))
+
+par(mar = c(3.5, 3.5, 2.5, 1))
+plot(x_mb, y_cn, pch = 20, cex = 0.25, col = col_vec,
+     xlab = "Position (Mb)", ylab = expression(log[2](hat(a)[k])),
+     main = "Negative control bins across chr1  (green = control, grey = excluded)",
+     ylim = c(-2, 3))
+abline(h = 0, col = "#E69F00", lwd = 1.5, lty = 2)
+legend("topright", bty = "n", cex = 0.85,
+       legend = c(sprintf("Control (%d bins, 28%%)", sum(stratB)), "Excluded"),
+       col    = c(adjustcolor("#009E73", 0.8), adjustcolor("#999999", 0.6)),
+       pch    = 20, pt.cex = 1.2)
+```
+
+```{r negctrl-null-hist, fig.width=6, fig.height=4, dev="png", dpi=180}
+# Null distribution for S1 on control bins, with normal overlay
+null_s1 <- df$S1[stratB & !is.na(df$S1)]
+xlim    <- c(-2, 2)
+xseq    <- seq(xlim[1], xlim[2], length.out = 300)
+h       <- hist(null_s1, breaks = 80, plot = FALSE)
+par(mar = c(4, 3.5, 2.5, 1))
+plot(h, freq = FALSE, col = adjustcolor("#009E73", 0.6), border = NA,
+     main = expression("Null distribution: " * log[2](hat(a)[k]) * " on control bins (S1)"),
+     xlab = expression(log[2](hat(a)[k]) * " under H0"),
+     xlim = xlim, cex.main = 0.9)
+abline(v = 0, col = "red", lwd = 1.5, lty = 2)
+lines(xseq, dnorm(xseq, mean(null_s1), sd(null_s1)), col = "black", lwd = 2)
+legend("topright", bty = "n", cex = 0.85,
+       legend = sprintf("n = %d\nMean = %.3f\nSD = %.3f",
+                        length(null_s1), mean(null_s1), sd(null_s1)))
 ```
 
 ```{r null-dist-plot, fig.width=12, fig.height=8, dev="png", dpi=180}
