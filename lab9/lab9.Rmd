@@ -377,6 +377,107 @@ Calibration alone thus does not eliminate any candidate; it ranks S1 marginally 
 
 ------------------------------------------------------------------------
 
+## Part C -- Computing P-values
+
+Based on our conclusion in Part B, we proceed with **Statistic S1** (plain log) and **Strategy B** (local stability filter).
+We use the control bins identified by Strategy B to define our empirical null distribution. For each bin across the entire chromosome, we calculate a two-sided empirical p-value.
+
+```{r compute-pvalues}
+# Isolate the empirical null distribution values
+null_stats <- df$S1[stratB & !is.na(df$S1)]
+n_null <- length(null_stats)
+
+cat(sprintf("Null Mean (S1): %.5f\nNull SD (S1): %.5f\nNull Size: %d\n", 
+            mean(null_stats), sd(null_stats), n_null))
+
+# Calculate empirical two-sided p-values for all bins
+# p_k = |{j in ctrl : |T_j| >= |T_k|}| / |ctrl|
+abs_T <- abs(df$S1)
+abs_null <- abs(null_stats)
+
+# Fast empirical p-value calculation using ecdf
+ecdf_null <- ecdf(abs_null)
+# ecdf gives P(X <= x). We want P(X >= x) = 1 - P(X < x). 
+# For empirical p-values from a finite sample, 1 - ecdf(x - epsilon) is equivalent, 
+# but simply counting is more direct and robust to ties.
+df$p_val <- sapply(abs_T, function(x) {
+  if(is.na(x)) return(NA_real_)
+  sum(abs_null >= x) / n_null
+})
+
+# Prevent p=0 for FDR correction stability
+min_p <- 1 / n_null
+df$p_val <- pmax(df$p_val, min_p)
+
+# Preview the most significant bins
+head(df[order(df$p_val), c("pos", "reads", "gc", "cn", "S1", "p_val")])
+```
+
+------------------------------------------------------------------------
+
+## Part D -- FDR Correction and Segmentation
+
+We apply the Benjamini-Hochberg (BH) procedure with a target FDR of $\alpha = 0.01$.
+Adjacent significant windows are grouped into continuous genomic segments (events).
+
+```{r fdr-correction}
+alpha <- 0.01
+
+# Apply Benjamini-Hochberg FDR correction
+df$p_adj <- p.adjust(df$p_val, method = "BH")
+df$is_sig <- !is.na(df$p_adj) & df$p_adj < alpha
+
+# Determine the type of change (Gain vs Loss)
+# Since S1 = log(a_hat), positive is gain, negative is loss.
+df$change_type <- "Normal"
+df$change_type[df$is_sig & df$S1 > 0] <- "Gain"
+df$change_type[df$is_sig & df$S1 < 0] <- "Loss"
+
+cat(sprintf("Total bins: %d\n", nrow(df)))
+cat(sprintf("Significant bins (FDR < 1%%): %d\n", sum(df$is_sig, na.rm = TRUE)))
+cat(sprintf("  - Gains: %d bins\n", sum(df$change_type == "Gain", na.rm = TRUE)))
+cat(sprintf("  - Losses: %d bins\n", sum(df$change_type == "Loss", na.rm = TRUE)))
+
+# Group adjacent significant bins into segments using rle
+rle_res <- rle(df$change_type)
+end_idx <- cumsum(rle_res$lengths)
+start_idx <- c(1, head(end_idx, -1) + 1)
+
+segments <- data.table(
+  change_type = rle_res$values,
+  start_idx = start_idx,
+  end_idx = end_idx,
+  n_bins = rle_res$lengths
+)
+
+# Filter for significant segments only
+sig_segments <- segments[change_type != "Normal"]
+
+# Calculate genomic coordinates and summary stats for each segment
+sig_segments[, `:=`(
+  start_mb = df$pos[start_idx] / 1e6,
+  end_mb   = df$pos[end_idx] / 1e6,
+  size_kb  = (df$pos[end_idx] - df$pos[start_idx] + BIN) / 1e3,
+  mean_cn  = mapply(function(s, e) mean(df$cn[s:e], na.rm = TRUE), start_idx, end_idx),
+  min_padj = mapply(function(s, e) min(df$p_adj[s:e], na.rm = TRUE), start_idx, end_idx)
+)]
+
+# Clean up table for display, filtering for segments > 10kb to remove single-bin noise
+segments_display <- sig_segments[size_kb > 10, .(
+  Event = change_type,
+  Start_Mb = round(start_mb, 2),
+  End_Mb = round(end_mb, 2),
+  Size_kb = round(size_kb, 1),
+  Bins = n_bins,
+  Mean_CN = round(mean_cn, 3),
+  Min_FDR = signif(min_padj, 3)
+)]
+
+knitr::kable(segments_display, caption = "Significant Copy Number Alteration Segments (FDR < 0.01, Size > 10kb)")
+```
+
+------------------------------------------------------------------------
+
 ## External sources statement
 
 We used AI (Claude) to design the negative control selection strategy (exploratory analysis comparing MAD-3 vs local stability filters) and to structure this document.
