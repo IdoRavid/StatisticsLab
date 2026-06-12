@@ -520,6 +520,17 @@ fig <- plot_ly(
 fig
 ```
 
+The interactive visualization above brings together our robust statistic mapping, the empirical boundary calibration, and the Benjamini-Hochberg FDR filtering across the entirety of Chromosome 1.
+
+Several key biological and technical features are immediately visible on the interactive canvas:
+
+- **The Centromere Gap:** The completely clear window between roughly 120 Mb and 130 Mb represents the centromeric region which was explicitly excluded during our genomic binning stage due to known reference-mapping assembly gaps.
+- **The Background Noise Envelope:** The massive horizontal band of grey markers clustered tightly around the $S1 = 0$ axis represents the structurally stable, copy-number neutral background ($H_0$). Because we applied the local stability filter (Strategy B) to build the empirical null, our testing threshold is highly calibrated, leaving the normal chromosome arms mostly flat and noise-free.
+- **Significant Depletions (Losses in Blue):** The prominent, sharp drops of blue markers clustered tightly together (e.g., near 28.5 Mb) match our earlier segmentation findings perfectly, showing a clean copy-number loss. Additional focal micro-deletions are captured throughout both chromosome arms, emphasizing the fine resolution preserved by evaluating $S1$ at a single-bin level.
+- **Significant Amplifications (Gains in Red):** The distinct blocks of red markers rising above the baseline envelope capture true tumor-specific somatic duplications.
+
+By utilizing the interactive zoom and pan controls, we can verify that the segmentation logic smoothly clustered these distinct signal changes without allowing single-point technical outliers to generate broad false-positive calls.
+
 ------------------------------------------------------------------------
 
 ## External sources statement
