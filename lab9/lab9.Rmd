@@ -478,6 +478,50 @@ knitr::kable(segments_display, caption = "Significant Copy Number Alteration Seg
 
 ------------------------------------------------------------------------
 
+## Part E -- Visualization (Section ז')
+
+To visualize the results of our copy number variation analysis, we plot the `S1` statistic ($\log(\hat{a}_k)$) across the chromosome, highlighting the regions identified as statistically significant amplifications (Gain, CN > 1) and deletions (Loss, CN < 1).
+
+Because rendering tens of thousands of points interactively can be slow, we keep all the significant bins but downsample the "Normal" (non-significant) bins to keep the plot responsive.
+
+```{r interactive-plot, warning=FALSE, message=FALSE}
+if (!require('plotly')) { install.packages('plotly'); library('plotly') }
+
+# Downsample 'Normal' bins to keep the Plotly interactive plot responsive
+set.seed(42)
+normal_bins <- which(df$change_type == "Normal" & !is.na(df$S1))
+sampled_normal <- sample(normal_bins, min(10000, length(normal_bins)))
+sig_bins <- which(df$change_type != "Normal" & !is.na(df$S1))
+
+# Combine sampled normal bins and all significant bins
+plot_df <- df[c(sampled_normal, sig_bins), ]
+# Reorder by position so the hover behaves nicely
+plot_df <- plot_df[order(plot_df$pos), ]
+
+fig <- plot_ly(
+  data = plot_df,
+  x = ~pos / 1e6,
+  y = ~S1,
+  type = 'scatter',
+  mode = 'markers',
+  color = ~change_type,
+  colors = c("Normal" = "grey", "Gain" = "red", "Loss" = "blue"),
+  marker = list(size = 3, opacity = 0.5),
+  text = ~paste("Position:", round(pos / 1e6, 3), "Mb<br>S1 Stat:", round(S1, 4), "<br>Status:", change_type),
+  hoverinfo = "text"
+) %>%
+  layout(
+    title = "Chromosome 1: Detected Copy Number Variations",
+    xaxis = list(title = "Genomic Position (Mb)"),
+    yaxis = list(title = "S1 Statistic (log(a-hat))"),
+    legend = list(title = list(text = "<b> Status </b>"))
+  )
+
+fig
+```
+
+------------------------------------------------------------------------
+
 ## External sources statement
 
 We used AI (Claude) to design the negative control selection strategy (exploratory analysis comparing MAD-3 vs local stability filters) and to structure this document.
