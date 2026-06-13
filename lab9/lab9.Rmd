@@ -8,6 +8,7 @@ output:
     extra_dependencies: ["fvextra"]
   html_document:
     code_folding: show
+always_allow_html: true
 header-includes:
   - \DefineVerbatimEnvironment{Highlighting}{Verbatim}{breaklines,commandchars=\\\{\}}
 editor_options:
@@ -113,7 +114,7 @@ We considered three candidates, all computed as a rolling aggregate over a windo
 We evaluated all three against the empirical null (Part B).
 S2 and S3 produce noticeably narrower, more compressed null distributions when combined with the local-stability negative control filter: the filter already removes noisy bins, so a further robust aggregation over-compresses the tails.
 S1 -- plain $\log_2(\hat{a}_k)$ -- keeps the most natural spread.
-We carry all three forward to Part C and defer the final choice until we see their detection performance on the full chromosome; the "resistance to single noisy bins" requirement is in any case addressed by the negative control selection (Part B) rather than by the statistic alone.
+We carry all three forward and defer the final choice to Part B, where a calibration test on held-out control bins selects between them; the "resistance to single noisy bins" requirement is in any case addressed by the negative control selection (Part B) rather than by the statistic alone.
 
 ```{r define-statistics}
 W    <- 11
@@ -373,52 +374,80 @@ The check still discriminates, though.
 **S1 is the best calibrated** (KS $D \approx 0.009$, with FPR almost exactly $0.01$ and $0.05$), tracking the uniform diagonal nearly perfectly.
 S2 and S3 are slightly **conservative** -- their realised FPR falls *below* $\alpha$ and their P--P curves bow under the diagonal -- because the heavy aggregation discretises the statistic and inflates ties.
 Conservatism is safe but costs power: at a fixed $\alpha$, a conservative test detects fewer true events.
-Calibration alone thus does not eliminate any candidate; it ranks S1 marginally best and sets up the decisive test -- **detection power** -- which we examine next.
+Calibration alone does not strictly eliminate any candidate, but it gives us a principled basis to choose: **S1 is both the best-calibrated (tightest to the uniform diagonal) and the simplest** -- a single-bin statistic with no aggregation -- while the conservatism of S2/S3 implies they would detect fewer true events at the same $\alpha$.
+We therefore carry **S1** forward as our statistic for the genome-wide scan in Part C.
 
 ------------------------------------------------------------------------
 
-## Part C -- Computing P-values
+## Part C - Computing P-values
 
 Based on our conclusion in Part B, we proceed with **Statistic S1** (plain log) and **Strategy B** (local stability filter).
-We use the control bins identified by Strategy B to define our empirical null distribution. For each bin across the entire chromosome, we calculate a two-sided empirical p-value.
+We use the control bins identified by Strategy B to define our empirical null distribution.
+For every testable bin on the chromosome -- one with reads in both the tumor and the matched healthy sample -- we calculate a two-sided empirical p-value.
+The empirical null is summarised below: it is built from the Strategy-B control bins, is centred essentially at 0 (confirming the $\log_2$ ratio is unbiased under $H_0$), and is narrow enough to resolve very small p-values.
 
 ```{r compute-pvalues}
 # Isolate the empirical null distribution values
 null_stats <- df$S1[stratB & !is.na(df$S1)]
-n_null <- length(null_stats)
+n_null     <- length(null_stats)
+null_mean  <- mean(null_stats)
+null_sd    <- sd(null_stats)
 
-cat(sprintf("Null Mean (S1): %.5f\nNull SD (S1): %.5f\nNull Size: %d\n", 
-            mean(null_stats), sd(null_stats), n_null))
+# Report the null summary as a clean table
+null_summary <- data.frame(
+  Quantity = c("Control bins (null size)", "Null mean (S1)", "Null SD (S1)",
+               "Smallest attainable p-value"),
+  Value = c(format(n_null, big.mark = ","),
+            sprintf("%.5f", null_mean),
+            sprintf("%.5f", null_sd),
+            signif(1 / n_null, 2))
+)
+knitr::kable(null_summary, align = c("l", "r"),
+             caption = "Empirical null distribution of S1 on the control bins.")
 
-# Calculate empirical two-sided p-values for all bins
+# Calculate empirical two-sided p-values.
 # p_k = |{j in ctrl : |T_j| >= |T_k|}| / |ctrl|
-abs_T <- abs(df$S1)
+# IMPORTANT: only test bins with reads in *both* samples (nz). A bin with zero
+# coverage in a sample gets an eps-smoothed ratio far from 1 and would read as a
+# huge "loss" -- e.g. the unmappable pericentromeric band -- so we leave such
+# bins untested (p = NA) rather than calling them significant.
 abs_null <- abs(null_stats)
 
-# Fast empirical p-value calculation using ecdf
-ecdf_null <- ecdf(abs_null)
-# ecdf gives P(X <= x). We want P(X >= x) = 1 - P(X < x). 
-# For empirical p-values from a finite sample, 1 - ecdf(x - epsilon) is equivalent, 
-# but simply counting is more direct and robust to ties.
-df$p_val <- sapply(abs_T, function(x) {
-  if(is.na(x)) return(NA_real_)
+df$p_val <- NA_real_
+df$p_val[nz] <- sapply(abs(df$S1[nz]), function(x) {
+  if (is.na(x)) return(NA_real_)
   sum(abs_null >= x) / n_null
 })
 
 # Prevent p=0 for FDR correction stability
 min_p <- 1 / n_null
-df$p_val <- pmax(df$p_val, min_p)
+df$p_val[nz] <- pmax(df$p_val[nz], min_p)
 
-# Preview the most significant bins
-head(df[order(df$p_val), c("pos", "reads", "gc", "cn", "S1", "p_val")])
+# Preview the most extreme bins (smallest p-values), as a clean table
+top_bins <- df[order(df$p_val), ][1:10, ]
+top_tbl <- data.frame(
+  `Position (Mb)` = round(top_bins$pos / 1e6, 3),
+  `Tumor reads`   = top_bins$reads,
+  `Ratio a-hat`   = round(top_bins$cn_2s, 3),
+  `S1 = log2`     = round(top_bins$S1, 3),
+  `p-value`       = signif(top_bins$p_val, 2),
+  check.names = FALSE
+)
+knitr::kable(top_tbl, align = "r",
+             caption = "Ten most extreme bins by empirical p-value (smallest p first).")
 ```
 
 ------------------------------------------------------------------------
 
-## Part D -- FDR Correction and Segmentation
+## Part D - FDR Correction and Segmentation
 
-We apply the Benjamini-Hochberg (BH) procedure with a target FDR of $\alpha = 0.01$.
-Adjacent significant windows are grouped into continuous genomic segments (events).
+At the nominal level $\alpha = 0.01$, before any correction, a large number of bins are flagged (the uncorrected count is reported below, answering part ד) -- but with tens of thousands of bins tested, roughly $\alpha \times N$ of those are expected false positives purely by chance, so the raw count is not trustworthy.
+
+**The property the correction preserves (part ה).** We use the **Benjamini--Hochberg (BH)** procedure, which controls the **False Discovery Rate (FDR)** -- the *expected proportion of false positives among the bins we call significant*.
+Setting the BH target to $0.01$ guarantees that, on average, at most $1\%$ of our reported significant bins are false discoveries.
+This is deliberately different from Bonferroni, which controls the **family-wise error rate** (the probability of *even one* false positive anywhere) and would be far too strict here: with \$\sim\$85,000 tests Bonferroni's per-test threshold collapses to $\approx 10^{-7}$ and would discard almost all of the true, weaker copy-number events.
+Because we are screening a whole chromosome for *many* real alterations rather than guarding against a single false call, FDR control is the appropriate trade-off -- it tolerates a small, known fraction of false positives in exchange for much greater power to detect true events.
+Adjacent significant windows are then grouped into continuous genomic segments (events).
 
 ```{r fdr-correction}
 alpha <- 0.01
@@ -428,15 +457,26 @@ df$p_adj <- p.adjust(df$p_val, method = "BH")
 df$is_sig <- !is.na(df$p_adj) & df$p_adj < alpha
 
 # Determine the type of change (Gain vs Loss)
-# Since S1 = log(a_hat), positive is gain, negative is loss.
+# Since S1 = log2(a_hat), positive is gain, negative is loss.
 df$change_type <- "Normal"
 df$change_type[df$is_sig & df$S1 > 0] <- "Gain"
 df$change_type[df$is_sig & df$S1 < 0] <- "Loss"
 
-cat(sprintf("Total bins: %d\n", nrow(df)))
-cat(sprintf("Significant bins (FDR < 1%%): %d\n", sum(df$is_sig, na.rm = TRUE)))
-cat(sprintf("  - Gains: %d bins\n", sum(df$change_type == "Gain", na.rm = TRUE)))
-cat(sprintf("  - Losses: %d bins\n", sum(df$change_type == "Loss", na.rm = TRUE)))
+# Headline counts: tested bins, nominal hits (part D), and post-correction calls
+n_tested  <- sum(!is.na(df$p_val))
+n_raw_sig <- sum(df$p_val < alpha, na.rm = TRUE)   # before correction (spec part D)
+n_sig     <- sum(df$is_sig, na.rm = TRUE)
+count_tbl <- data.frame(
+  Quantity = c("Testable bins (reads in both samples)",
+               sprintf("Nominally significant (p < %.2f, uncorrected)", alpha),
+               sprintf("Significant after BH (FDR < %.2f)", alpha),
+               "  - of which Gains (ratio > 1)",
+               "  - of which Losses (ratio < 1)"),
+  Count = c(n_tested, n_raw_sig, n_sig,
+            sum(df$change_type == "Gain"), sum(df$change_type == "Loss"))
+)
+knitr::kable(count_tbl, align = c("l", "r"),
+             caption = "Significant-bin counts before and after multiple-testing correction.")
 
 # Group adjacent significant bins into segments using rle
 rle_res <- rle(df$change_type)
@@ -453,12 +493,15 @@ segments <- data.table(
 # Filter for significant segments only
 sig_segments <- segments[change_type != "Normal"]
 
-# Calculate genomic coordinates and summary stats for each segment
+# Calculate genomic coordinates and summary stats for each segment.
+# Report the two-sample ratio cn_2s (= tumor/healthy) -- that is the quantity the
+# whole test is built on. The single-sample tumor cn ignores the healthy baseline
+# and can disagree in sign with the event call.
 sig_segments[, `:=`(
   start_mb = df$pos[start_idx] / 1e6,
   end_mb   = df$pos[end_idx] / 1e6,
   size_kb  = (df$pos[end_idx] - df$pos[start_idx] + BIN) / 1e3,
-  mean_cn  = mapply(function(s, e) mean(df$cn[s:e], na.rm = TRUE), start_idx, end_idx),
+  mean_ratio = mapply(function(s, e) mean(df$cn_2s[s:e], na.rm = TRUE), start_idx, end_idx),
   min_padj = mapply(function(s, e) min(df$p_adj[s:e], na.rm = TRUE), start_idx, end_idx)
 )]
 
@@ -469,23 +512,77 @@ segments_display <- sig_segments[size_kb > 10, .(
   End_Mb = round(end_mb, 2),
   Size_kb = round(size_kb, 1),
   Bins = n_bins,
-  Mean_CN = round(mean_cn, 3),
+  Mean_ratio = round(mean_ratio, 3),
   Min_FDR = signif(min_padj, 3)
 )]
 
 knitr::kable(segments_display, caption = "Significant Copy Number Alteration Segments (FDR < 0.01, Size > 10kb)")
 ```
 
-------------------------------------------------------------------------
+## Part E - Visualization
 
-## Part E -- Visualization (Section ז')
+To visualize the results of our copy number variation analysis, we plot the `S1` statistic ($\log(\hat{a}_k)$) across the chromosome, highlighting the regions identified as statistically significant amplifications (Gain, CN \> 1) and deletions (Loss, CN \< 1).
 
-To visualize the results of our copy number variation analysis, we plot the `S1` statistic ($\log(\hat{a}_k)$) across the chromosome, highlighting the regions identified as statistically significant amplifications (Gain, CN > 1) and deletions (Loss, CN < 1).
+We provide two views: a static genome-wide plot (below) that renders in any output format, and an interactive Plotly version (rendered only in the HTML build) that supports zoom, pan and per-bin hover -- the "movable graph" the task allows as an alternative to a region list.
 
-Because rendering tens of thousands of points interactively can be slow, we keep all the significant bins but downsample the "Normal" (non-significant) bins to keep the plot responsive.
+```{r cnv-static-plot, fig.width=12, fig.height=4.5, dev="png", dpi=180}
+# Static genome-wide view -- always renders (PDF and HTML).
+set.seed(42)
+norm_idx <- which(df$change_type == "Normal" & !is.na(df$S1))
+norm_s   <- sample(norm_idx, min(15000, length(norm_idx)))
+gain_idx <- which(df$change_type == "Gain")
+loss_idx <- which(df$change_type == "Loss")
+
+par(mar = c(4.2, 4, 2.5, 1), mgp = c(2.3, 0.7, 0))
+plot(df$pos[norm_s] / 1e6, pmin(pmax(df$S1[norm_s], -3), 3),
+     pch = 20, cex = 0.25, col = adjustcolor("grey60", 0.35),
+     xlab = "Genomic position (Mb)", ylab = expression(S1 == log[2](hat(a)[k])),
+     main = "Chr1: detected copy-number variants (FDR < 0.01)",
+     ylim = c(-3, 3), xlim = range(df$pos / 1e6))
+abline(h = 0, col = "grey30", lty = 2)
+points(df$pos[loss_idx] / 1e6, pmin(pmax(df$S1[loss_idx], -3), 3),
+       pch = 20, cex = 0.5, col = adjustcolor("#1f78b4", 0.7))
+points(df$pos[gain_idx] / 1e6, pmin(pmax(df$S1[gain_idx], -3), 3),
+       pch = 20, cex = 0.5, col = adjustcolor("#e31a1c", 0.7))
+legend("topright", bty = "n", pch = 20, pt.cex = 1.2,
+       col = c("grey60", "#e31a1c", "#1f78b4"),
+       legend = c("Normal", "Gain (ratio > 1)", "Loss (ratio < 1)"))
+```
+
+It is also worth seeing the **raw tumor read counts** directly, with each bin coloured by its anomaly call.
+This shows the detection acting on the actual coverage: significant losses sit in the low read-count bins and gains in the high ones, while the grey background stays near the chromosome-wide median (~216 reads / 2.5 kb bin).
+
+```{r cnv-reads-plot, fig.width=12, fig.height=4.5, dev="png", dpi=180}
+# Raw tumor read counts per bin, coloured by CNV call. Pure scatter: no lines,
+# so the centromere gap stays empty (no interpolation across it).
+ycap <- quantile(df$reads[nz], 0.995)        # cap y so a few huge bins don't dominate
+x_mb <- df$pos / 1e6
+y    <- pmin(df$reads, ycap)
+
+# Draw Normal first, then anomalies on top so the calls are not buried
+ord  <- order(df$change_type != "Normal")
+cols <- c(Normal = adjustcolor("grey65", 0.35),
+          Gain   = adjustcolor("#e31a1c", 0.8),
+          Loss   = adjustcolor("#1f78b4", 0.8))
+
+par(mar = c(4.2, 4, 2.5, 1), mgp = c(2.3, 0.7, 0))
+plot(x_mb[ord], y[ord], pch = 20,
+     cex = ifelse(df$change_type[ord] == "Normal", 0.2, 0.5),
+     col = cols[df$change_type[ord]],
+     xlab = "Genomic position (Mb)", ylab = "Tumor reads per 2.5 kb bin",
+     main = "Chr1: tumor read counts, coloured by CNV call (FDR < 0.01)",
+     ylim = c(0, ycap), xlim = range(x_mb))
+legend("topright", bty = "n", pch = 20, pt.cex = 1.4,
+       col = cols[c("Normal", "Gain", "Loss")],
+       legend = c("Normal", "Gain (ratio > 1)", "Loss (ratio < 1)"))
+```
+
+The interactive version below downsamples the "Normal" bins (keeping all significant ones) so the widget stays responsive.
+It is always exported to a self-contained `AnomalyDetections.html` file (which can be hosted and linked from a slide deck), and is shown inline only in the HTML build.
 
 ```{r interactive-plot, warning=FALSE, message=FALSE}
-if (!require('plotly')) { install.packages('plotly'); library('plotly') }
+if (!require('plotly'))      { install.packages('plotly');      library('plotly') }
+if (!require('htmlwidgets')) { install.packages('htmlwidgets'); library('htmlwidgets') }
 
 # Downsample 'Normal' bins to keep the Plotly interactive plot responsive
 set.seed(42)
@@ -517,19 +614,24 @@ fig <- plot_ly(
     legend = list(title = list(text = "<b> Status </b>"))
   )
 
-fig
+# Always write the standalone interactive file (for hosting / slide linking)
+htmlwidgets::saveWidget(fig, "AnomalyDetections.html", selfcontained = TRUE)
+
+# Show inline only in HTML output; the PDF uses the static plot above
+if (knitr::is_html_output()) fig else knitr::asis_output("")
 ```
 
-The interactive visualization above brings together our robust statistic mapping, the empirical boundary calibration, and the Benjamini-Hochberg FDR filtering across the entirety of Chromosome 1.
+These plots bring together our robust statistic mapping, the empirical null calibration, and the Benjamini-Hochberg FDR filtering across the entirety of Chromosome 1.
 
-Several key biological and technical features are immediately visible on the interactive canvas:
+Several features are visible across the chromosome:
 
-- **The Centromere Gap:** The completely clear window between roughly 120 Mb and 130 Mb represents the centromeric region which was explicitly excluded during our genomic binning stage due to known reference-mapping assembly gaps.
-- **The Background Noise Envelope:** The massive horizontal band of grey markers clustered tightly around the $S1 = 0$ axis represents the structurally stable, copy-number neutral background ($H_0$). Because we applied the local stability filter (Strategy B) to build the empirical null, our testing threshold is highly calibrated, leaving the normal chromosome arms mostly flat and noise-free.
-- **Significant Depletions (Losses in Blue):** The prominent, sharp drops of blue markers clustered tightly together (e.g., near 28.5 Mb) match our earlier segmentation findings perfectly, showing a clean copy-number loss. Additional focal micro-deletions are captured throughout both chromosome arms, emphasizing the fine resolution preserved by evaluating $S1$ at a single-bin level.
-- **Significant Amplifications (Gains in Red):** The distinct blocks of red markers rising above the baseline envelope capture true tumor-specific somatic duplications.
+-   **The Centromere Gap:** The clear window between roughly 120 Mb and 130 Mb is the centromeric region, excluded during binning because of known reference-mapping assembly gaps. We only test bins with reads in *both* samples, so the unmappable pericentromeric flanks are left untested rather than mis-called as losses.
+-   **The Background Envelope:** The dense band of grey markers around $S1 = 0$ is the copy-number-neutral background ($H_0$). Because the empirical null is built from the locally stable control bins (Strategy B), the bulk of both arms sits flat near zero, as expected.
+-   **Significant Losses (Blue):** The clearest focal deletion is near 28.5 Mb (mean ratio $\approx 0.54$, a roughly two-fold loss), and a cluster of significant losses appears around 141--142 Mb. These are evaluated on the two-sample ratio, so they reflect tumor-specific change relative to the matched healthy sample, not absolute tumor coverage.
+-   **Significant Gains (Red):** Bins rising above the baseline envelope are candidate tumor-specific amplifications; the calls are more scattered and focal than the losses.
 
-By utilizing the interactive zoom and pan controls, we can verify that the segmentation logic smoothly clustered these distinct signal changes without allowing single-point technical outliers to generate broad false-positive calls.
+Because we test the single-bin statistic $S1$, individual calls are at fine resolution; the `rle` segmentation then groups runs of same-direction significant bins into the events listed in the table above.
+The size filter ($>10$ kb) in that table suppresses isolated single-bin calls, while the plots show every significant bin.
 
 ------------------------------------------------------------------------
 
