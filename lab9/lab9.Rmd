@@ -106,7 +106,7 @@ We then take $\log_2(\hat{a}_k)$: under $H_0$ (CN = 1) this is centred at 0, gai
 We considered three candidates, all computed as a rolling aggregate over a window of $W = 11$ bins ($\approx 27.5$ kb):
 
 | Statistic | Formula | Notes |
-|----|----|----|
+|------------------------|------------------------|------------------------|
 | **S1**: plain log$_2$ | $\log_2(\hat{a}_k)$ -- per bin, no aggregation | Baseline |
 | **S2**: trimmed mean | $\overline{\log_2(\hat{a})}_{10\%}$ over window | Hard-discards top/bottom 10% of bins |
 | **S3**: Huber location | $\hat{\mu}_\text{Huber}(\log_2(\hat{a}),\, k=1.345)$ over window | Continuously downweights outlier bins |
@@ -136,32 +136,6 @@ roll_stat <- function(x, fun) {
 df$S1 <- log2_cn
 df$S2 <- roll_stat(log2_cn, function(x) mean(x, trim = 0.10))
 df$S3 <- roll_stat(log2_cn, function(x) huber(x, k = 1.345)$mu)
-```
-
-```{r stat-distributions, fig.width=11, fig.height=4, dev="png", dpi=180}
-par(mfrow = c(1, 3), mar = c(4, 3.5, 2.5, 1))
-stats <- list(
-  list(v = df$S1[nz], lab = "S1: log2(a-hat)  (per bin)"),
-  list(v = df$S2[nz & !is.na(df$S2)], lab = "S2: trimmed mean of log2(a-hat)"),
-  list(v = df$S3[nz & !is.na(df$S3)], lab = "S3: Huber of log2(a-hat)")
-)
-cols <- c("#555555", "#56B4E9", "#009E73")
-
-for (i in seq_along(stats)) {
-  v    <- stats[[i]]$v
-  v    <- pmin(pmax(v, -2), 2)
-  xlim <- c(-2, 2)
-  xseq <- seq(xlim[1], xlim[2], length.out = 300)
-  h    <- hist(v, breaks = 100, plot = FALSE)
-  plot(h, freq = FALSE, col = adjustcolor(cols[i], 0.6), border = NA,
-       main = stats[[i]]$lab, xlab = "Statistic value", cex.main = 0.85,
-       xlim = xlim)
-  abline(v = 0, col = "red", lwd = 2, lty = 2)
-  lines(xseq, dnorm(xseq, mean(v, na.rm = TRUE), sd(v, na.rm = TRUE)),
-        col = "black", lwd = 2)
-  legend("topright", bty = "n", cex = 0.8,
-         legend = sprintf("SD=%.3f\nMAD=%.3f", sd(v, na.rm=TRUE), mad(v, na.rm=TRUE)))
-}
 ```
 
 ------------------------------------------------------------------------
@@ -227,24 +201,6 @@ legend("topright", bty = "n", cex = 0.85,
                           sum(stratB), 100 * sum(stratB) / sum(nz)), "Excluded"),
        col    = c(adjustcolor("#009E73", 0.8), adjustcolor("#999999", 0.6)),
        pch    = 20, pt.cex = 1.2)
-```
-
-```{r negctrl-null-hist, fig.width=6, fig.height=4, dev="png", dpi=180}
-# Null distribution for S1 on control bins, with normal overlay
-null_s1 <- df$S1[stratB & !is.na(df$S1)]
-xlim    <- c(-2, 2)
-xseq    <- seq(xlim[1], xlim[2], length.out = 300)
-h       <- hist(null_s1, breaks = 80, plot = FALSE)
-par(mar = c(4, 3.5, 2.5, 1))
-plot(h, freq = FALSE, col = adjustcolor("#555555", 0.6), border = NA,
-     main = expression("Null distribution: " * log[2](hat(a)[k]) * " on control bins (S1)"),
-     xlab = expression(log[2](hat(a)[k]) * " under H0"),
-     xlim = xlim, cex.main = 0.9)
-abline(v = 0, col = "red", lwd = 1.5, lty = 2)
-lines(xseq, dnorm(xseq, mean(null_s1), sd(null_s1)), col = "black", lwd = 2)
-legend("topright", bty = "n", cex = 0.85,
-       legend = sprintf("n = %d\nMean = %.3f\nSD = %.3f",
-                        length(null_s1), mean(null_s1), sd(null_s1)))
 ```
 
 ```{r null-dist-plot, fig.width=13, fig.height=7.3, dev="png", dpi=180}
@@ -437,6 +393,78 @@ knitr::kable(top_tbl, align = "r",
              caption = "Ten most extreme bins by empirical p-value (smallest p first).")
 ```
 
+### How different is the parametric alternative?
+
+We could instead assume the statistic is Normal under $H_0$ and read p-values off the fitted curve: with $\mu_0, \sigma_0$ estimated from the same control bins, the two-sided parametric p-value is $p_k = 2\,\bigl[1 - \Phi(|T_k - \mu_0| / \sigma_0)\bigr]$.
+It is natural to ask how much this choice actually matters -- do the two approaches flag different bins?
+
+```{r param-pvalues}
+# Parametric (Normal) p-values from the same control-bin mean/SD, for comparison.
+z_score        <- (df$S1 - null_mean) / null_sd
+df$p_val_param <- NA_real_
+df$p_val_param[nz] <- 2 * pnorm(-abs(z_score[nz]))
+
+# BH on both, then compare the significant calls
+sig_emp   <- !is.na(df$p_val)       & p.adjust(df$p_val,       method = "BH") < 0.01
+sig_param <- !is.na(df$p_val_param) & p.adjust(df$p_val_param, method = "BH") < 0.01
+
+cmp_tbl <- data.frame(
+  Quantity = c("Nominally significant (p < 0.01)",
+               "Significant after BH (FDR < 0.01)",
+               "Called by both",
+               "Called by empirical only",
+               "Called by parametric only"),
+  Count = c(sprintf("%d  /  %d", sum(df$p_val < 0.01, na.rm = TRUE),
+                                  sum(df$p_val_param < 0.01, na.rm = TRUE)),
+            sprintf("%d  /  %d", sum(sig_emp), sum(sig_param)),
+            sum(sig_emp & sig_param),
+            sum(sig_emp & !sig_param),
+            sum(sig_param & !sig_emp))
+)
+knitr::kable(cmp_tbl, align = c("l", "r"),
+             col.names = c("Quantity", "Empirical / Parametric"),
+             caption = "Bins flagged by the empirical vs parametric (Normal) p-values.")
+```
+
+```{r param-compare-plot, fig.width=8, fig.height=4, dev="png", dpi=180}
+# Bins sorted by empirical p-value vs rank, with the BH significance cutoffs marked.
+# Colour carries the empirical-vs-parametric difference: which significant bins
+# both methods agree on, vs the ones only the empirical test keeps.
+alpha <- 0.01
+pv <- df$p_val[nz]; se <- sig_emp[nz]; sp <- sig_param[nz]
+m  <- length(pv)
+ord <- order(pv)
+pv_s <- pv[ord]; se_s <- se[ord]; sp_s <- sp[ord]
+rank <- seq_len(m)
+
+col_cls <- ifelse(se_s & sp_s, "both",
+           ifelse(se_s & !sp_s, "emp_only", "none"))
+pal <- c(both = "#1b9e77", emp_only = "#e31a1c", none = adjustcolor("grey55", 0.5))
+
+nsig <- sum(se); nsig_par <- sum(sp)
+xmax <- nsig + 400; sel <- rank <= xmax       # zoom to the decision region
+
+par(mar = c(4.5, 4.7, 3, 1), mgp = c(2.7, 0.8, 0))
+plot(rank[sel], pv_s[sel], pch = 20, cex = 0.5, col = pal[col_cls[sel]],
+     xlab = "Bin rank (sorted by empirical p-value)", ylab = "Empirical p-value",
+     main = "BH significance cutoff on empirical p-values", ylim = c(0, max(pv_s[sel])))
+abline(v = nsig_par, col = "#999999", lty = 3, lwd = 1.3)
+abline(v = nsig,     col = "#7570b3", lty = 2, lwd = 1.6)
+text(nsig, max(pv_s[sel]) * 0.92, sprintf("empirical BH cutoff\n(%d bins)", nsig),
+     col = "#7570b3", adj = c(1.05, 1), cex = 0.8)
+text(nsig_par, max(pv_s[sel]) * 0.40, sprintf("parametric\ncutoff (%d)", nsig_par),
+     col = "#666666", adj = c(1.05, 1), cex = 0.78)
+legend("topleft", bty = "n", pch = 20, pt.cex = 1.3, cex = 0.9,
+       col = c("#1b9e77", "#e31a1c", "grey55"),
+       legend = c("Sig in both methods", "Sig empirical-only (573)", "Not significant"))
+```
+
+The BH procedure keeps every bin up to the largest rank whose sorted p-value still satisfies the FDR criterion; the dashed line marks that empirical cutoff (2,913 bins) and the dotted line the parametric one (2,340).
+**For the vast majority of bins the choice of p-value does not matter** -- the two methods agree on the 2,340 calls with the smallest p-values (green), and on the tens of thousands of clearly non-significant bins (grey).
+The disagreement is small and entirely one-sided: the empirical test additionally keeps 573 bins (red), while the parametric keeps **none** that the empirical misses, so the parametric calls are a strict subset.
+Those 573 red bins are exactly the marginal ones between the two cutoffs: the more conservative Normal model drops them, costing power, without any compensating gain (in the far tail it instead becomes wildly over-confident, assigning the single most extreme bin $p \approx 10^{-133}$ -- a precision \$\sim\$31,000 control observations cannot support, whereas the empirical p-value honestly bottoms out at $1/m \approx 3.2\times10^{-5}$).
+Since the empirical null also needs no distributional assumption, we keep it for the genome-wide scan.
+
 ------------------------------------------------------------------------
 
 ## Part D - FDR Correction and Segmentation
@@ -550,7 +578,7 @@ legend("topright", bty = "n", pch = 20, pt.cex = 1.2,
 ```
 
 It is also worth seeing the **raw tumor read counts** directly, with each bin coloured by its anomaly call.
-This shows the detection acting on the actual coverage: significant losses sit in the low read-count bins and gains in the high ones, while the grey background stays near the chromosome-wide median (~216 reads / 2.5 kb bin).
+This shows the detection acting on the actual coverage: significant losses sit in the low read-count bins and gains in the high ones, while the grey background stays near the chromosome-wide median (\~216 reads / 2.5 kb bin).
 
 ```{r cnv-reads-plot, fig.width=12, fig.height=4.5, dev="png", dpi=180}
 # Raw tumor read counts per bin, coloured by CNV call. Pure scatter: no lines,
