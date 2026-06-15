@@ -31,6 +31,10 @@ Group members (Name, ID, email)
 ### Paths and Data
 
 ```{r setup, message=FALSE, warning=FALSE}
+# Ensure a CRAN mirror is set so install.packages() works on a fresh machine
+if (is.null(getOption("repos")) || getOption("repos")["CRAN"] == "@CRAN@") {
+  options(repos = c(CRAN = "https://cloud.r-project.org"))
+}
 if (!require('data.table')) { install.packages('data.table'); library('data.table') }
 if (!require('splines'))    { install.packages('splines');    library('splines') }
 if (!require('MASS'))       { install.packages('MASS');       library('MASS') }
@@ -147,7 +151,7 @@ We use the paired healthy tissue sample (TCGA-13-0723-10B): a normal blood cell 
 
 We apply the local stability filter (**Strategy B**) directly on the **two-sample ratio** $\log_2(\hat{a}_k)$: a bin is kept as a negative control only if its 11-bin neighbourhood simultaneously has a median near 0 **and** a low local SD.
 We set the two cut-offs in interpretable linear-ratio units and then convert to $\log_2$: the local median CN must stay within $\pm 10\%$ of the no-change baseline ($|\tilde{T}| \leq \log_2 1.10 \approx 0.137$), and the local scatter must stay under $\pm 15\%$ (SD $\leq \log_2 1.15 \approx 0.202$).
-Filtering on the ratio rather than the healthy sample alone is the correct choice: $H_0$ is "no tumor-specific CN change" (ratio = 1), not "healthy CN = 1 absolutely." This also handles germline CNVs correctly â€” if both samples carry a duplication at some locus, the ratio is still 1 and the bin is a valid negative control.
+Filtering on the ratio rather than the healthy sample alone is the correct choice: $H_0$ is "no tumor-specific CN change" (ratio = 1), not "healthy CN = 1 absolutely." This also handles germline CNVs correctly -- if both samples carry a duplication at some locus, the ratio is still 1 and the bin is a valid negative control.
 Bins at tumor CN-event boundaries are excluded because their neighbours reveal the disruption even if the bin itself lands near 1.
 Approximately 37% of non-zero bins pass this filter, giving \~31,000 control bins across both chromosome arms.
 
@@ -155,7 +159,7 @@ Approximately 37% of non-zero bins pass this filter, giving \~31,000 control bin
 The $\log_2(\hat{a}_k)$ values of the selected control bins are a direct sample from the distribution of the statistic when CN = 1 -- we use them directly as the empirical null, without assuming any parametric form.
 The histograms and QQ plots below characterise this distribution for each of the three candidate statistics.
 
-**How p-values are derived (Part C).** For any test bin $k$ with statistic value $T_k$, the two-sided empirical p-value is the fraction of null values at least as extreme: $$p_k = \frac{\bigl|\{j \in \text{ctrl} : |T_j| \geq |T_k|\}\bigr|}{|\text{ctrl}|}$$ With \$\sim\$31,000 control bins this resolves p-values down to $\approx 3 \times 10^{-5}$, sufficient for testing at $\alpha = 0.01$ after multiple testing correction.
+**How p-values are derived (Part C).** For any test bin $k$ with statistic value $T_k$, the two-sided empirical p-value is the fraction of null values at least as extreme: $$p_k = \frac{\bigl|\{j \in \text{ctrl} : |T_j| \geq |T_k|\}\bigr|}{|\text{ctrl}|}$$ With $\sim$31,000 control bins this resolves p-values down to $\approx 3 \times 10^{-5}$, sufficient for testing at $\alpha = 0.01$ after multiple testing correction.
 No normality assumption is required.
 
 ```{r neg-ctrl}
@@ -214,7 +218,7 @@ par(mfrow = c(2, 3), mar = c(4.5, 4, 3, 1), mgp = c(2.4, 0.8, 0),
 for (ti in 1:3) {
   mask  <- stratB & !is.na(stat_list_b[[ti]])
   v     <- stat_list_b[[ti]][mask]
-  # xlim: 5 SDs each side so shape is always visible, floor at Â±0.5
+  # xlim: 5 SDs each side so shape is always visible, floor at +/-0.5
   hw    <- max(5 * sd(v), 0.5)
   xlim  <- c(-hw, hw)
   xseq  <- seq(xlim[1], xlim[2], length.out = 300)
@@ -393,10 +397,10 @@ knitr::kable(top_tbl, align = "r",
              caption = "Ten most extreme bins by empirical p-value (smallest p first).")
 ```
 
-### How different is the parametric alternative?
+### Comparison with a parametric alternative
 
 We could instead assume the statistic is Normal under $H_0$ and read p-values off the fitted curve: with $\mu_0, \sigma_0$ estimated from the same control bins, the two-sided parametric p-value is $p_k = 2\,\bigl[1 - \Phi(|T_k - \mu_0| / \sigma_0)\bigr]$.
-It is natural to ask how much this choice actually matters -- do the two approaches flag different bins?
+It is worth asking how much this choice actually matters -- whether the two approaches flag different bins.
 
 ```{r param-pvalues}
 # Parametric (Normal) p-values from the same control-bin mean/SD, for comparison.
@@ -460,20 +464,21 @@ legend("topleft", bty = "n", pch = 20, pt.cex = 1.3, cex = 0.9,
 ```
 
 The BH procedure keeps every bin up to the largest rank whose sorted p-value still satisfies the FDR criterion; the dashed line marks that empirical cutoff (2,913 bins) and the dotted line the parametric one (2,340).
-**For the vast majority of bins the choice of p-value does not matter** -- the two methods agree on the 2,340 calls with the smallest p-values (green), and on the tens of thousands of clearly non-significant bins (grey).
-The disagreement is small and entirely one-sided: the empirical test additionally keeps 573 bins (red), while the parametric keeps **none** that the empirical misses, so the parametric calls are a strict subset.
-Those 573 red bins are exactly the marginal ones between the two cutoffs: the more conservative Normal model drops them, costing power, without any compensating gain (in the far tail it instead becomes wildly over-confident, assigning the single most extreme bin $p \approx 10^{-133}$ -- a precision \$\sim\$31,000 control observations cannot support, whereas the empirical p-value honestly bottoms out at $1/m \approx 3.2\times10^{-5}$).
-Since the empirical null also needs no distributional assumption, we keep it for the genome-wide scan.
+For the vast majority of bins the choice of p-value does not matter: the two methods agree on the 2,340 calls with the smallest p-values (green) and on the tens of thousands of clearly non-significant bins (grey).
+The disagreement is small and one-sided -- the empirical test keeps 573 additional bins (red), while the parametric keeps none that the empirical misses, so the parametric calls are a strict subset.
+Those 573 red bins are the marginal ones lying between the two cutoffs: the more conservative Normal model drops them, costing power, with no compensating gain.
+In the opposite extreme it is over-confident, assigning the single most extreme bin $p \approx 10^{-133}$ -- a precision the $\sim$31,000 control observations cannot support, whereas the empirical p-value bottoms out at its resolution floor $1/m \approx 3.2\times10^{-5}$.
+Since the empirical null also requires no distributional assumption, we retain it for the genome-wide scan.
 
 ------------------------------------------------------------------------
 
 ## Part D - FDR Correction and Segmentation
 
-At the nominal level $\alpha = 0.01$, before any correction, a large number of bins are flagged (the uncorrected count is reported below, answering part ×“) -- but with tens of thousands of bins tested, roughly $\alpha \times N$ of those are expected false positives purely by chance, so the raw count is not trustworthy.
+At the nominal level $\alpha = 0.01$, before any correction, a large number of bins are flagged (the uncorrected count is reported below, answering part ד) -- but with tens of thousands of bins tested, roughly $\alpha \times N$ of those are expected false positives purely by chance, so the raw count is not trustworthy.
 
-**The property the correction preserves (part ×”).** We use the **Benjamini--Hochberg (BH)** procedure, which controls the **False Discovery Rate (FDR)** -- the *expected proportion of false positives among the bins we call significant*.
+**The property the correction preserves (part ה).** We use the **Benjamini--Hochberg (BH)** procedure, which controls the **False Discovery Rate (FDR)** -- the *expected proportion of false positives among the bins we call significant*.
 Setting the BH target to $0.01$ guarantees that, on average, at most $1\%$ of our reported significant bins are false discoveries.
-This is deliberately different from Bonferroni, which controls the **family-wise error rate** (the probability of *even one* false positive anywhere) and would be far too strict here: with \$\sim\$85,000 tests Bonferroni's per-test threshold collapses to $\approx 10^{-7}$ and would discard almost all of the true, weaker copy-number events.
+This is deliberately different from Bonferroni, which controls the **family-wise error rate** (the probability of *even one* false positive anywhere) and would be far too strict here: with $\sim$85,000 tests Bonferroni's per-test threshold collapses to $\approx 10^{-7}$ and would discard almost all of the true, weaker copy-number events.
 Because we are screening a whole chromosome for *many* real alterations rather than guarding against a single false call, FDR control is the appropriate trade-off -- it tolerates a small, known fraction of false positives in exchange for much greater power to detect true events.
 Adjacent significant windows are then grouped into continuous genomic segments (events).
 
@@ -544,12 +549,12 @@ segments_display <- sig_segments[size_kb > 10, .(
   Min_FDR = signif(min_padj, 3)
 )]
 
-knitr::kable(segments_display, caption = "Significant Copy Number Alteration Segments (FDR < 0.01, Size > 10kb)")
+knitr::kable(segments_display, caption = "Significant copy-number alteration segments (FDR < 0.01, size > 10 kb).")
 ```
 
 ## Part E - Visualization
 
-To visualize the results of our copy number variation analysis, we plot the `S1` statistic ($\log(\hat{a}_k)$) across the chromosome, highlighting the regions identified as statistically significant amplifications (Gain, CN \> 1) and deletions (Loss, CN \< 1).
+To visualise the results of our copy-number analysis, we plot the $S1$ statistic ($\log_2(\hat{a}_k)$) across the chromosome, highlighting the regions identified as statistically significant amplifications (Gain, CN \> 1) and deletions (Loss, CN \< 1).
 
 We provide two views: a static genome-wide plot (below) that renders in any output format, and an interactive Plotly version (rendered only in the HTML build) that supports zoom, pan and per-bin hover -- the "movable graph" the task allows as an alternative to a region list.
 
@@ -653,10 +658,10 @@ These plots bring together our robust statistic mapping, the empirical null cali
 
 Several features are visible across the chromosome:
 
--   **The Centromere Gap:** The clear window between roughly 120 Mb and 130 Mb is the centromeric region, excluded during binning because of known reference-mapping assembly gaps. We only test bins with reads in *both* samples, so the unmappable pericentromeric flanks are left untested rather than mis-called as losses.
--   **The Background Envelope:** The dense band of grey markers around $S1 = 0$ is the copy-number-neutral background ($H_0$). Because the empirical null is built from the locally stable control bins (Strategy B), the bulk of both arms sits flat near zero, as expected.
--   **Significant Losses (Blue):** The clearest focal deletion is near 28.5 Mb (mean ratio $\approx 0.54$, a roughly two-fold loss), and a cluster of significant losses appears around 141--142 Mb. These are evaluated on the two-sample ratio, so they reflect tumor-specific change relative to the matched healthy sample, not absolute tumor coverage.
--   **Significant Gains (Red):** Bins rising above the baseline envelope are candidate tumor-specific amplifications; the calls are more scattered and focal than the losses.
+-   **The centromere gap.** The clear window between roughly 120 Mb and 130 Mb is the centromeric region, excluded during binning because of known reference-mapping assembly gaps. We only test bins with reads in *both* samples, so the unmappable pericentromeric flanks are left untested rather than mis-called as losses.
+-   **The background envelope.** The dense band of grey markers around $S1 = 0$ is the copy-number-neutral background ($H_0$). Because the empirical null is built from the locally stable control bins (Strategy B), the bulk of both arms sits flat near zero, as expected.
+-   **Significant losses (blue).** The clearest focal deletion is near 28.5 Mb (mean ratio $\approx 0.54$, a roughly two-fold loss), and a cluster of significant losses appears around 141--142 Mb. These are evaluated on the two-sample ratio, so they reflect tumor-specific change relative to the matched healthy sample, not absolute tumor coverage.
+-   **Significant gains (red).** Bins rising above the baseline envelope are candidate tumor-specific amplifications; the calls are more scattered and focal than the losses.
 
 Because we test the single-bin statistic $S1$, individual calls are at fine resolution; the `rle` segmentation then groups runs of same-direction significant bins into the events listed in the table above.
 The size filter ($>10$ kb) in that table suppresses isolated single-bin calls, while the plots show every significant bin.
@@ -727,5 +732,12 @@ r190 <- plot_reads_zoom(cnv_zoom_df, 190, 8, "Around 190 Mb")
 
 ## External sources statement
 
-We used AI (Claude) to design the negative control selection strategy (exploratory analysis comparing MAD-3 vs local stability filters) and to structure this document.
-Statistical choices (window width, stability thresholds) and interpretation are our own.
+We made extensive use of AI assistants throughout this lab, in several distinct roles:
+
+-   **Background research.** We used ChatGPT and Claude to survey the copy-number-detection literature and to suggest candidate test statistics, which led us to consider robust window aggregates (trimmed mean, Huber location) alongside the plain per-bin statistic.
+-   **Method exploration.** We used Claude to prototype and compare several negative-control selection strategies (e.g. a MAD-3 outlier filter versus the local-stability filter we ultimately adopted), and to design the split-half calibration check used to choose the final statistic.
+-   **Code.** We used Claude to write and debug much of the R code -- the empirical p-value computation, the Benjamini--Hochberg correction and `rle` segmentation, and the parametric-vs-empirical comparison -- including catching and fixing correctness bugs (for example, restricting the test to bins with reads in both samples).
+-   **Visualisation.** We used Claude to build and iterate on the figures, including the genome-wide scatter plots, the calibration P--P plots, the BH-cutoff comparison plot, and the interactive Plotly widget exported as a standalone HTML file.
+-   **Writing.** We used Claude to help structure this document and tighten its prose.
+
+All statistical choices (window width, stability thresholds, the FDR target), the interpretation of the results, and the final decisions on what to include remain our own; we reviewed and verified the AI-generated code and text throughout.
