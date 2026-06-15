@@ -106,7 +106,7 @@ We then take $\log_2(\hat{a}_k)$: under $H_0$ (CN = 1) this is centred at 0, gai
 We considered three candidates, all computed as a rolling aggregate over a window of $W = 11$ bins ($\approx 27.5$ kb):
 
 | Statistic | Formula | Notes |
-|------------------------|------------------------|------------------------|
+|----|----|----|
 | **S1**: plain log$_2$ | $\log_2(\hat{a}_k)$ -- per bin, no aggregation | Baseline |
 | **S2**: trimmed mean | $\overline{\log_2(\hat{a})}_{10\%}$ over window | Hard-discards top/bottom 10% of bins |
 | **S3**: Huber location | $\hat{\mu}_\text{Huber}(\log_2(\hat{a}),\, k=1.345)$ over window | Continuously downweights outlier bins |
@@ -147,7 +147,7 @@ We use the paired healthy tissue sample (TCGA-13-0723-10B): a normal blood cell 
 
 We apply the local stability filter (**Strategy B**) directly on the **two-sample ratio** $\log_2(\hat{a}_k)$: a bin is kept as a negative control only if its 11-bin neighbourhood simultaneously has a median near 0 **and** a low local SD.
 We set the two cut-offs in interpretable linear-ratio units and then convert to $\log_2$: the local median CN must stay within $\pm 10\%$ of the no-change baseline ($|\tilde{T}| \leq \log_2 1.10 \approx 0.137$), and the local scatter must stay under $\pm 15\%$ (SD $\leq \log_2 1.15 \approx 0.202$).
-Filtering on the ratio rather than the healthy sample alone is the correct choice: $H_0$ is "no tumor-specific CN change" (ratio = 1), not "healthy CN = 1 absolutely." This also handles germline CNVs correctly — if both samples carry a duplication at some locus, the ratio is still 1 and the bin is a valid negative control.
+Filtering on the ratio rather than the healthy sample alone is the correct choice: $H_0$ is "no tumor-specific CN change" (ratio = 1), not "healthy CN = 1 absolutely." This also handles germline CNVs correctly â€” if both samples carry a duplication at some locus, the ratio is still 1 and the bin is a valid negative control.
 Bins at tumor CN-event boundaries are excluded because their neighbours reveal the disruption even if the bin itself lands near 1.
 Approximately 37% of non-zero bins pass this filter, giving \~31,000 control bins across both chromosome arms.
 
@@ -214,7 +214,7 @@ par(mfrow = c(2, 3), mar = c(4.5, 4, 3, 1), mgp = c(2.4, 0.8, 0),
 for (ti in 1:3) {
   mask  <- stratB & !is.na(stat_list_b[[ti]])
   v     <- stat_list_b[[ti]][mask]
-  # xlim: 5 SDs each side so shape is always visible, floor at ±0.5
+  # xlim: 5 SDs each side so shape is always visible, floor at Â±0.5
   hw    <- max(5 * sd(v), 0.5)
   xlim  <- c(-hw, hw)
   xseq  <- seq(xlim[1], xlim[2], length.out = 300)
@@ -469,9 +469,9 @@ Since the empirical null also needs no distributional assumption, we keep it for
 
 ## Part D - FDR Correction and Segmentation
 
-At the nominal level $\alpha = 0.01$, before any correction, a large number of bins are flagged (the uncorrected count is reported below, answering part ד) -- but with tens of thousands of bins tested, roughly $\alpha \times N$ of those are expected false positives purely by chance, so the raw count is not trustworthy.
+At the nominal level $\alpha = 0.01$, before any correction, a large number of bins are flagged (the uncorrected count is reported below, answering part ×“) -- but with tens of thousands of bins tested, roughly $\alpha \times N$ of those are expected false positives purely by chance, so the raw count is not trustworthy.
 
-**The property the correction preserves (part ה).** We use the **Benjamini--Hochberg (BH)** procedure, which controls the **False Discovery Rate (FDR)** -- the *expected proportion of false positives among the bins we call significant*.
+**The property the correction preserves (part ×”).** We use the **Benjamini--Hochberg (BH)** procedure, which controls the **False Discovery Rate (FDR)** -- the *expected proportion of false positives among the bins we call significant*.
 Setting the BH target to $0.01$ guarantees that, on average, at most $1\%$ of our reported significant bins are false discoveries.
 This is deliberately different from Bonferroni, which controls the **family-wise error rate** (the probability of *even one* false positive anywhere) and would be far too strict here: with \$\sim\$85,000 tests Bonferroni's per-test threshold collapses to $\approx 10^{-7}$ and would discard almost all of the true, weaker copy-number events.
 Because we are screening a whole chromosome for *many* real alterations rather than guarding against a single false call, FDR control is the appropriate trade-off -- it tolerates a small, known fraction of false positives in exchange for much greater power to detect true events.
@@ -660,6 +660,68 @@ Several features are visible across the chromosome:
 
 Because we test the single-bin statistic $S1$, individual calls are at fine resolution; the `rle` segmentation then groups runs of same-direction significant bins into the events listed in the table above.
 The size filter ($>10$ kb) in that table suppresses isolated single-bin calls, while the plots show every significant bin.
+
+------------------------------------------------------------------------
+
+## Part F -- Local Zoom-In Plots
+
+We zoom into four candidate areas (75 Mb, 100 Mb, 145 Mb, 190 Mb), comparing raw tumor read counts (coloured by CNV call) against the matched healthy sample.
+A 51-bin rolling median ($\approx$ 127.5 kb) is overlaid for each sample to reveal regional trends through bin-level noise.
+
+```{r zoom-setup, message=FALSE, warning=FALSE}
+if (!require('ggplot2'))   { install.packages('ggplot2');   library('ggplot2') }
+if (!require('dplyr'))     { install.packages('dplyr');     library('dplyr') }
+if (!require('patchwork')) { install.packages('patchwork'); library('patchwork') }
+if (!require('zoo'))       { install.packages('zoo');       library('zoo') }
+
+cnv_zoom_df <- data.frame(
+  pos_mb        = df$pos / 1e6,
+  tumor_reads   = df$reads,
+  healthy_reads = df_h$reads,
+  S1             = df$S1,
+  status         = factor(df$change_type, levels = c("Normal", "Gain", "Loss"))
+)
+
+k_roll <- 51
+cnv_zoom_df <- cnv_zoom_df %>%
+  mutate(
+    tumor_rollmed   = rollmedian(tumor_reads,   k = k_roll, fill = NA, align = "center"),
+    healthy_rollmed = rollmedian(healthy_reads, k = k_roll, fill = NA, align = "center"),
+    S1_rollmed      = rollmedian(S1,            k = k_roll, fill = NA, align = "center")
+  )
+```
+
+```{r zoom-four-reads, fig.width=12, fig.height=7, dev="png", dpi=180}
+plot_reads_zoom <- function(zdf, center_mb, window_mb = 8, title = NULL) {
+  if (is.null(title)) title <- paste0("Around ", center_mb, " Mb")
+  region <- zdf %>%
+    filter(pos_mb >= center_mb - window_mb / 2,
+           pos_mb <= center_mb + window_mb / 2)
+  pal <- c(Normal = "grey65", Gain = "red", Loss = "blue")
+  ggplot(region, aes(x = pos_mb)) +
+    geom_point(aes(y = healthy_reads), color = "grey80", alpha = 0.30, size = 0.5) +
+    geom_point(aes(y = tumor_reads, color = status), alpha = 0.45, size = 0.6) +
+    geom_line(aes(y = tumor_rollmed),   color = "black",   linewidth = 0.8) +
+    geom_line(aes(y = healthy_rollmed), color = "#E69F00", linewidth = 0.8, linetype = "dashed") +
+    scale_color_manual(values = pal) +
+    coord_cartesian(ylim = c(0, 800)) +
+    labs(
+      title = title,
+      x     = "Position (Mb)",
+      y     = "Reads per 2.5 kb bin",
+      color = "CNV call"
+    ) +
+    theme_bw()
+}
+
+r75  <- plot_reads_zoom(cnv_zoom_df, 75,  8, "Around 75 Mb")
+r100 <- plot_reads_zoom(cnv_zoom_df, 100, 8, "Around 100 Mb")
+r145 <- plot_reads_zoom(cnv_zoom_df, 145, 8, "Around 145 Mb")
+r190 <- plot_reads_zoom(cnv_zoom_df, 190, 8, "Around 190 Mb")
+
+(r75 | r100) / (r145 | r190) +
+  plot_annotation(subtitle = "Black line = tumor rolling median  |  Orange dashed = healthy rolling median  |  Points coloured by CNV call")
+```
 
 ------------------------------------------------------------------------
 
