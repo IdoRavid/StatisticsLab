@@ -1,11 +1,11 @@
 \documentclass[12pt,a4paper]{article}
 
 % ------------------------------------------------------------------
-%  Statistics Lab (52568) — Formula Sheet  (2 sides, font 12)
+%  Statistics Lab (52568) — Formula & Concept Sheet  (2 sides, font 12)
 %  Compile with pdflatex.
 % ------------------------------------------------------------------
 
-\usepackage[margin=1.8cm]{geometry}
+\usepackage[margin=1.3cm]{geometry}
 \usepackage{amsmath, amssymb}
 \usepackage{booktabs}
 \usepackage{multicol}
@@ -15,10 +15,10 @@
 \usepackage[T1]{fontenc}
 
 \titleformat{\section}{\normalfont\large\bfseries}{}{0em}{}[\vspace{-4pt}\rule{\linewidth}{0.5pt}]
-\titlespacing{\section}{0pt}{6pt}{4pt}
-\setlength{\columnsep}{1.2em}
+\titlespacing{\section}{0pt}{4pt}{2pt}
+\setlength{\columnsep}{1.0em}
+\setlength{\parskip}{2pt}
 
-\newcommand{\mbb}[1]{\mathbb{#1}}
 \newcommand{\E}{\mathbb{E}}
 \newcommand{\Var}{\mathrm{Var}}
 \newcommand{\med}{\mathrm{med}}
@@ -26,188 +26,207 @@
 
 \begin{document}
 \begin{center}
-  {\large\bfseries Statistics Lab 52568 — Formula \& Concept Sheet}\\[2pt]
+  {\large\bfseries Statistics Lab 52568 — Formula \& Concept Sheet}\\[1pt]
   {\small Group 12 $\cdot$ Ido, Omer, Shir}
 \end{center}
-\vspace{-4pt}
-
+\vspace{-6pt}
 \begin{multicols}{2}
 
 %--------------------------------------------------------------------
-\section*{Coverage \& Poisson Model}
+\section*{Sequence Basics (Lab 1)}
 %--------------------------------------------------------------------
 
-\textbf{Coverage} $Y_i$ = number of reads starting at base $i$.
+\textbf{Chargaff's rule:} double-stranded DNA has A$\approx$T and C$\approx$G.\\
+Consequence: proportion plots of A\&T track each other; so do C\&G.
 
-\textbf{Uniform Poisson} (3 assumptions):
-\begin{enumerate}[leftmargin=*, itemsep=0pt, topsep=2pt]
-  \item Identical distribution: same $p_i$ for every fragment
+\textbf{GC content} of a bin of size $b$:
+$\text{gc}_k = (G_k + C_k)/b \in [0,1]$
+
+\textbf{Key graphs}: proportion vs.\ position (bin each base, plot $\text{count}/b$); running median as trend line; scatter plots between base pairs (A vs T, C vs G should be most correlated).
+
+%--------------------------------------------------------------------
+\section*{Coverage \& the Poisson Model (Lec 2--3)}
+%--------------------------------------------------------------------
+
+$Y_i$ = number of reads starting at base $i$, for $i=1,\ldots,I$.\\
+$J$ = total number of fragments in the experiment.
+
+\textbf{Average coverage:}
+\[
+  \lambda = \frac{J}{I} = \frac{\text{total reads}}{\text{total bases}}, \qquad
+  \text{avg distance} = \frac{1}{\lambda}
+\]
+
+\textbf{Uniform Poisson — 3 assumptions:}
+\begin{enumerate}[leftmargin=*, itemsep=0pt, topsep=1pt]
+  \item Identical distribution: every fragment has the same $p_i$
   \item Uniformity: $p_i = 1/I$ for all $i$
   \item Independence: fragments land independently
 \end{enumerate}
-$\Rightarrow$ $Y_i \sim \text{Poisson}(\lambda)$, \quad $\lambda = J/I$
-
-\textbf{Key Poisson property:} $\E[Y] = \Var[Y] = \lambda$
+(1)+(3): $Y_i \sim \text{Binomial}(J, p_i)$.
+Adding (2) + Poisson approx ($J$ large, $1/I$ small):
 \[
-  \text{VMR} = \frac{\Var[Y]}{\E[Y]} = 1 \quad (\text{if uniform})
+  Y_i \sim \text{Poisson}(\lambda), \quad
+  \E[Y] = \Var[Y] = \lambda, \quad
+  \text{SD}[Y] = \sqrt{\lambda}
+\]
+\textbf{Additive property:} $X_1,\ldots,X_K \sim \text{Pois}(\lambda)$ independent
+$\Rightarrow X_1+\cdots+X_K \sim \text{Pois}(K\lambda)$. \\
+$\Rightarrow$ Bin of size $b$: $Y_k \sim \text{Pois}(\lambda_k)$,\ $\lambda_k = \sum_{i \in k} p_i \cdot J$.
+
+\textbf{VMR} (Variance-to-Mean Ratio):
+\[
+  \text{VMR} = \frac{\Var[Y]}{\E[Y]} = 1 \quad \text{under uniform Poisson}
 \]
 
-\textbf{Binned coverage:} bin $k$ of size $b$:
-$Y_k = \sum_{\text{bases in }k} Y_i \;\sim\; \text{Poisson}(\lambda_k)$
+\textbf{Key graphs}: histogram of $Y_i$ vs fitted Poisson bars (log-scale y); coverage vs position with y-axis capped (mark outliers with different symbol); binned coverage full-chromosome plot.
 
 %--------------------------------------------------------------------
-\section*{Variance Decomposition (Law of Total Variance)}
+\section*{Overdispersion \& Variance Decomposition (Lec 3)}
 %--------------------------------------------------------------------
 
-\[
-  \Var(Y) = \underbrace{\E[\Var(Y \mid X)]}_{\text{avg within-group}} + \underbrace{\Var(\E[Y \mid X])}_{\text{variance of group means}}
-\]
+Real data: VMR $\approx 14.7$ — uniform model fails. Why?
 
-Applied to $Y_k \sim \text{Poisson}(\lambda_k)$:
-\[
-  \boxed{\Var(Y_k) = \underbrace{\E[\lambda_k]}_{\text{Poisson noise}} + \underbrace{\Var(\lambda_k)}_{\text{rate heterogeneity}}}
-\]
+\textbf{Two-level model:} $Y_k \sim \text{Pois}(\lambda_k)$, each bin has its own rate.
 
+\textbf{Law of Total Variance} (exact identity):
+\[
+  \Var(Y) = \underbrace{\E[\Var(Y\!\mid\!\lambda)]}_{\text{avg within-group}} + \underbrace{\Var(\E[Y\!\mid\!\lambda])}_{\text{variance of group means}}
+\]
+Applied here:
+\[
+  \boxed{\Var(Y_k) = \underbrace{\E[\lambda_k]}_{\bar\lambda\ (\text{Poisson noise})} + \underbrace{\Var(\lambda_k)}_{\text{rate heterogeneity}}}
+\]
 \[
   \text{VMR} = 1 + \frac{\Var(\lambda_k)}{\bar\lambda}
 \]
+VMR $=1$ iff all $\lambda_k$ equal. Spatial correlation of GC prevents $\Var(\lambda_k)$ from averaging out under binning — rates in nearby bins are similar.
 
-VMR $= 1$ iff all $\lambda_k$ equal (uniform model). \\
-Spatial correlation of GC content prevents $\Var(\lambda_k)$ from averaging out — hence VMR $\approx 14.7$ in our data.
+\textbf{Robust estimators} (resistant to outliers):\\
+Center: \textbf{median}. Spread: \textbf{IQR}, \textbf{MAD} $= \med|x_i - \med(x)|$.\\
+Use instead of mean/SD when data are heavy-tailed or have outliers.
 
 %--------------------------------------------------------------------
-\section*{Regression for $f(\text{gc})$}
+\section*{Linear Regression for $f(\gc)$ (Lec 4)}
 %--------------------------------------------------------------------
 
-\textbf{Linear:} $Y_k = \beta_0 + \beta_1\,\gc_k + \epsilon_k$,
-$\;\hat\beta_1 = \widehat{\text{Cov}}(\gc,Y)/\widehat{\Var}(\gc)$
+\textbf{Model:} $Y_k = \beta_0 + \beta_1\,\gc_k + \epsilon_k$, $\E[\epsilon_k]=0$
 
-\textbf{B-spline (cubic, knots $t_1,\ldots,t_m$):}
-Fit $Y_k \sim \text{bs}(\gc_k,\,\text{knots},\,\text{degree}=3)$ via OLS.
-Ensures continuity of function and derivatives 1–2 at each knot. \\
-More knots $=$ more flexibility; degree controls smoothness.
+\textbf{OLS estimate:}
+$\hat\beta_1 = \widehat{\text{Cov}}(\gc, Y)\,/\,\widehat{\Var}(\gc)$
 
-\textbf{Fit quality:}
-\[
-  R^2 = 1 - \frac{\text{RSS}}{\text{TSS}}, \quad
-  \text{RMSE} = \sqrt{\frac{1}{K}\sum_k r_k^2}
-\]
+\textbf{Residual plots}: residuals vs.\ $\gc$ and vs.\ fitted values should be flat. Fan shape $\Rightarrow$ heteroscedasticity. CIs from \texttt{lm} are \textbf{wrong} under misspecification.
+
+$R^2 = 1 - \text{RSS}/\text{TSS}$, \quad $\text{RMSE} = \sqrt{\tfrac{1}{K}\sum_k r_k^2}$.
+
+\textbf{Global polynomials}: sensitive to outliers — a few extreme points distort the entire fit.
+
+%--------------------------------------------------------------------
+\section*{Spline Regression (Lec 4)}
+%--------------------------------------------------------------------
+
+Key idea: divide the predictor into regions at \textbf{knots} $t_1,\ldots,t_m$; fit a polynomial in each piece; glue with smoothness constraints.
+
+\textbf{Progression}: piecewise constant $\to$ piecewise linear (discontinuous) $\to$ continuous linear spline $\to$ cubic spline (continuous 1st \& 2nd derivatives).
+
+\textbf{Cubic spline basis:}\ $\hat y = b_0 + b_1 x + b_2 x^2 + b_3 x^3 + \sum_j c_j(x-t_j)^3_+$, where $(u)_+=\max(u,0)$.
+
+\textbf{B-spline} \texttt{bs(x,knots,degree=3)}: locally supported basis, same fit. More knots = more flexibility.
 
 \textbf{Heteroscedasticity check:}
 \[
-  \text{SD ratio} = \frac{\text{SD}(\text{residuals},\,\gc>\text{Q3})}{\text{SD}(\text{residuals},\,\gc<\text{Q1})}
+  \text{SD ratio} = \frac{\text{SD}(\text{resid},\, \gc>\text{Q3})}{\text{SD}(\text{resid},\, \gc<\text{Q1})} \approx 2.25
 \]
-SD ratio $\approx 2.25$ in our data $\Rightarrow$ variance grows with coverage.
+SD ratio $\gg 1$ $\Rightarrow$ variance grows with $\gc$/coverage.
 
 %--------------------------------------------------------------------
-\section*{Poisson GLM \& Quasi-Poisson}
+\section*{Poisson GLM \& Quasi-Poisson (Lab 5)}
 %--------------------------------------------------------------------
 
-\textbf{Poisson GLM:} $\log\E[Y_k] = \beta_0 + \beta_1\,\gc_k$ \\
-Assumes $\Var(Y) = \E[Y]$. \\[2pt]
-\textbf{Quasi-Poisson:} same mean, but $\Var(Y) = \phi\,\E[Y]$, \;$\phi$ estimated. \\
-In our data: $\phi \approx 14$ after GC is modelled.
+\textbf{Poisson GLM:} $\log\E[Y_k] = \beta_0 + \beta_1\,\gc_k$ (log link, counts).\\
+Assumes $\Var(Y) = \E[Y]$ — still violated ($\phi \approx 14$).
 
-\textbf{McFadden pseudo-$R^2$:}
-$\displaystyle\tilde R^2 = 1 - \frac{\log L(\hat{\text{model}})}{\log L(\text{null})}$
+\textbf{Quasi-Poisson:} same mean, $\Var(Y) = \phi\,\E[Y]$, $\phi$ estimated from data. More honest uncertainty.
+
+\textbf{Comparing models:} $R^2$ for lm; McFadden pseudo-$R^2$ for GLM;
+$\displaystyle\tilde R^2 = 1 - \frac{\log L(\hat{\text{model}})}{\log L(\text{null})}$.\\
+Spearman $r$ is rank-based — robust to outliers, but misleading when there is no real signal (centromere paradox: Spearman $\approx 0.95$ despite $R^2 \approx 0$).
+
+\textbf{Bin size tradeoff:} larger bins $\downarrow$ Poisson noise, $\uparrow$ GC signal blurring. Statistical elbow $\sim$5 kb. Biological constraint: genes 10--100 kb.
 
 %--------------------------------------------------------------------
-\section*{Copy Number Estimation}
+\section*{Copy Number Estimation (Labs 6--8)}
 %--------------------------------------------------------------------
 
 \textbf{Model:}
 \[
   Y_k \sim \text{Pois}(\lambda_k), \quad \lambda_k = a_k \cdot f(\gc_k) + \epsilon_k
 \]
-Identifiability: $\med_k\{a_k\}=1$, $\;\E_k[f(\gc_k)]=1$, $\;\E[\epsilon_k]=0$.
+Identifiability constraints: $\med_k\{a_k\}=1$,\ $\E_k[f(\gc_k)]=1$,\ $\E[\epsilon_k]=0$.
 
 \textbf{Plug-in estimator:}
 \[
   \hat a_k = \frac{y_k}{\hat f(\gc_k)} \cdot \hat M, \quad
   \hat M = \frac{1}{\med_k\!\left\{\dfrac{y_k}{\hat f(\gc_k)}\right\}}
 \]
+= divide out GC effect, renormalize so median $= 1$.
 
-\textbf{Variance decomposition of $\hat a_k$:}
+\textbf{Variance of $\hat a_k$:}
 \[
   \Var(\hat a_k) \approx \frac{\lambda_k + \sigma^2}{f(\gc_k)^2}
-  = \underbrace{\frac{1}{f(\gc_k)}}_{\text{Poisson}} + \underbrace{\frac{\sigma^2}{f(\gc_k)^2}}_{\varepsilon\text{ noise}}
+  = \underbrace{\frac{1}{f(\gc_k)}}_{\text{Poisson}} + \underbrace{\frac{\sigma^2}{f(\gc_k)^2}}_{\varepsilon\ \text{noise}}
 \]
-In our data: Poisson $\approx 16\%$, $\varepsilon \approx 84\%$ of total variance.
-
-\textbf{Two-sample estimator:}
-\[
-  \hat a_k^{\text{2-sample}} = \frac{\hat a_k^{\text{tumor}}}{\hat a_k^{\text{healthy}}}
-\]
-Divides out shared GC bias and germline CNVs.
+In our data: Poisson $\approx 16\%$, $\varepsilon \approx 84\%$.
 
 \textbf{Noise models:}
-\begin{itemize}[leftmargin=*, itemsep=1pt, topsep=2pt]
-  \item Additive: $\lambda_k = a_k f + \epsilon$ (fixed-size offset)
-  \item Multiplicative: $\lambda_k = a_k f \cdot \eta$, $\;\eta\sim N(1,\gamma^2)$ \\ $\leftarrow$ more biologically plausible (error scales with signal)
+\begin{itemize}[leftmargin=*, itemsep=0pt, topsep=1pt]
+  \item Additive: $\lambda_k = a_k f + \epsilon$ — offset independent of signal
+  \item Multiplicative: $\lambda_k = a_k f \cdot \eta$, $\eta\sim N(1,\gamma^2)$ — error scales with signal; more biologically plausible (PCR amplifies proportionally)
 \end{itemize}
 
-%--------------------------------------------------------------------
-\section*{Hypothesis Testing \& Empirical Null}
-%--------------------------------------------------------------------
-
-\textbf{Statistic:} $S1_k = \log_2(\hat a_k^{\text{2-sample}})$ \\
-Under $H_0$ (no tumor-specific change): $S1 \approx 0$.
-
-\textbf{Negative control selection (Strategy B):}\\
-Keep bin $k$ if in its 11-bin window:
-$|\tilde{T}| \leq \log_2 1.10$ AND $\text{SD} \leq \log_2 1.15$.\\
-Filter on the \emph{ratio}, not the healthy alone: $H_0$ is ``no tumor-specific change'', so shared germline CNVs are correctly included.
-
-\textbf{Empirical two-sided p-value:}
+\textbf{Two-sample estimator (Lec 8):}
 \[
-  p_k = \frac{\bigl|\{j \in \text{ctrl} : |S1_j| \geq |S1_k|\}\bigr|}{|\text{ctrl}|}
+  \hat a_k^{\text{2-sample}} = \frac{\hat a_k^{\text{tumor}}}{\hat a_k^{\text{healthy}}}
+  = \frac{y_k^T / \hat f^T(\gc_k)}{y_k^H / \hat f^H(\gc_k)}
 \]
-Requires no distributional assumption; resolution floor $= 1/|\text{ctrl}|$.
+Fit a \emph{separate} GC spline per sample. Ratio cancels shared GC bias and germline CNVs. \\
+\textbf{Key diagnostic plot}: corrected ratio vs.\ position — should be flat at 1 under $H_0$. If coloured by CNV call, the y-axis must be the \emph{corrected} ratio, not raw reads.
 
-\textbf{Calibration check:} split control bins into interleaved blocks $\gg W$; compute p-values of held-out CN=1 bins; check P-P plot tracks the uniform diagonal. \\
-$\Rightarrow$ KS $D \approx 0.009$ (S1 well-calibrated).
-
-%--------------------------------------------------------------------
-\section*{Multiple Testing Correction}
-%--------------------------------------------------------------------
-
-\textbf{Bonferroni} (FWER control): $\alpha' = \alpha/m$. \\
-Probability of $\geq 1$ false positive $\leq \alpha$. \\
-Too strict for genome-wide scan ($m\sim10^5$).
-
-\textbf{Benjamini--Hochberg (FDR control):}\\
-Sort $p_{(1)} \leq \cdots \leq p_{(m)}$. Reject all $H_{(k)}$ with
-\[
-  k \leq k^* = \max\!\left\{k : p_{(k)} \leq \frac{k}{m}\alpha\right\}.
-\]
-Controls $\E\!\left[\frac{\text{false positives}}{\text{total significant}}\right] \leq \alpha$.\\
-Preferred for genome-wide tests: tolerates a known small fraction of false positives in exchange for power to detect many real events.
+\textbf{Aggregative model (Lab 7):} fit spline at fine bins (1 kb), predict coarse cells (10 kb) by summing sub-cell predictions. Captures local GC structure while controlling noise.
 
 %--------------------------------------------------------------------
-\section*{Bias--Variance Tradeoff / Bin Size}
+\section*{Hypothesis Testing \& Multiple Testing (Lab 9)}
 %--------------------------------------------------------------------
 
-Larger bins $\Rightarrow\;\downarrow$ per-bin Poisson noise, $\uparrow$ GC signal blurring.\\
-Statistical elbow: $\sim$5 kb (marginal $R^2$ gain $<5\%$ threshold). \\
-Biological constraint: genes 10--100 kb, CpG islands 0.5--2 kb. \\
-\textbf{Aggregative model:} fit at fine resolution, predict parent cells by summing sub-cell predictions — best of both (1 kb wins in lab 7).
+\textbf{Statistic:} $S_k = \log_2(\hat a_k^{\text{2-sample}})$. Under $H_0$: $S_k \approx 0$.
+
+\textbf{Negative controls}: locally stable bins (window median $\leq \log_2 1.10$, SD $\leq \log_2 1.15$), filtered on the \emph{ratio} so germline CNVs pass correctly.
+
+\textbf{Empirical p-value:} $p_k = |\{j : |S_j| \geq |S_k|\}|/|\text{ctrl}|$. No distributional assumption.
+
+\textbf{Calibration}: P-P plot of held-out CN=1 bin p-values should track the uniform diagonal.
+
+\textbf{Bonferroni} (FWER): $\alpha'=\alpha/m$. Too conservative ($m\sim10^5$).\\
+\textbf{Benjamini--Hochberg} (FDR): reject $H_{(k)}$ for $k \leq k^* = \max\{k: p_{(k)} \leq k\alpha/m\}$.\\
+Controls $\E[\text{FP}/\text{sig}]\leq\alpha$. Preferred: tolerates a small known FP fraction for much greater power.
 
 %--------------------------------------------------------------------
 \section*{Key Numbers}
 %--------------------------------------------------------------------
 
 \begin{tabular}{@{}ll@{}}
-$\lambda$ (50--60 Mb) & $\approx 0.036$ reads/base \\
-Binned VMR            & $\approx 14.7$ \\
-GC--coverage $r$      & $\approx 0.84$ \\
-Spline $R^2$ ceiling  & $\approx 0.75$ \\
-SD ratio              & $\approx 2.25$ \\
-Quasi-Poisson $\phi$  & $\approx 14$ \\
-CN MAE (healthy)      & $\approx 0.15$ \\
-Var split (Pois/$\varepsilon$) & 16\% / 84\% \\
-$r$ (tumor vs healthy)& $\approx 0.10$ \\
-FDR gains / losses    & 1600 / 1313 \\
-Focal deletion        & $\sim$28.5 Mb, ratio $\approx 0.54$ \\
+$\lambda$ (50--60 Mb)          & $\approx 0.036$/base \\
+Binned VMR                     & $\approx 14.7$ \\
+GC--coverage $r$               & $\approx 0.84$ \\
+Spline $R^2$ ceiling (5 kb)    & $\approx 0.75$ \\
+SD ratio (high/low GC)         & $\approx 2.25$ \\
+$R^2$ gain: G+C vs single base & $\approx 0.17$ \\
+Quasi-Poisson $\phi$ (after GC)& $\approx 14$ \\
+CN MAE from baseline           & $\approx 0.15$ \\
+Var split (Pois / $\varepsilon$)& 16\% / 84\% \\
+$r$ (tumor vs healthy, 2.5 kb) & $\approx 0.10$ \\
+Stat elbow (bin size)          & $\sim$5 kb \\
+Centromere gap                 & $\sim$120--130 Mb \\
 \end{tabular}
 
 \end{multicols}
