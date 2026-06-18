@@ -1,0 +1,214 @@
+\documentclass[12pt,a4paper]{article}
+
+% ------------------------------------------------------------------
+%  Statistics Lab (52568) — Formula Sheet  (2 sides, font 12)
+%  Compile with pdflatex.
+% ------------------------------------------------------------------
+
+\usepackage[margin=1.8cm]{geometry}
+\usepackage{amsmath, amssymb}
+\usepackage{booktabs}
+\usepackage{multicol}
+\usepackage{enumitem}
+\usepackage{parskip}
+\usepackage{titlesec}
+\usepackage[T1]{fontenc}
+
+\titleformat{\section}{\normalfont\large\bfseries}{}{0em}{}[\vspace{-4pt}\rule{\linewidth}{0.5pt}]
+\titlespacing{\section}{0pt}{6pt}{4pt}
+\setlength{\columnsep}{1.2em}
+
+\newcommand{\mbb}[1]{\mathbb{#1}}
+\newcommand{\E}{\mathbb{E}}
+\newcommand{\Var}{\mathrm{Var}}
+\newcommand{\med}{\mathrm{med}}
+\newcommand{\gc}{\text{gc}}
+
+\begin{document}
+\begin{center}
+  {\large\bfseries Statistics Lab 52568 — Formula \& Concept Sheet}\\[2pt]
+  {\small Group 12 $\cdot$ Ido, Omer, Shir}
+\end{center}
+\vspace{-4pt}
+
+\begin{multicols}{2}
+
+%--------------------------------------------------------------------
+\section*{Coverage \& Poisson Model}
+%--------------------------------------------------------------------
+
+\textbf{Coverage} $Y_i$ = number of reads starting at base $i$.
+
+\textbf{Uniform Poisson} (3 assumptions):
+\begin{enumerate}[leftmargin=*, itemsep=0pt, topsep=2pt]
+  \item Identical distribution: same $p_i$ for every fragment
+  \item Uniformity: $p_i = 1/I$ for all $i$
+  \item Independence: fragments land independently
+\end{enumerate}
+$\Rightarrow$ $Y_i \sim \text{Poisson}(\lambda)$, \quad $\lambda = J/I$
+
+\textbf{Key Poisson property:} $\E[Y] = \Var[Y] = \lambda$
+\[
+  \text{VMR} = \frac{\Var[Y]}{\E[Y]} = 1 \quad (\text{if uniform})
+\]
+
+\textbf{Binned coverage:} bin $k$ of size $b$:
+$Y_k = \sum_{\text{bases in }k} Y_i \;\sim\; \text{Poisson}(\lambda_k)$
+
+%--------------------------------------------------------------------
+\section*{Variance Decomposition (Law of Total Variance)}
+%--------------------------------------------------------------------
+
+\[
+  \Var(Y) = \underbrace{\E[\Var(Y \mid X)]}_{\text{avg within-group}} + \underbrace{\Var(\E[Y \mid X])}_{\text{variance of group means}}
+\]
+
+Applied to $Y_k \sim \text{Poisson}(\lambda_k)$:
+\[
+  \boxed{\Var(Y_k) = \underbrace{\E[\lambda_k]}_{\text{Poisson noise}} + \underbrace{\Var(\lambda_k)}_{\text{rate heterogeneity}}}
+\]
+
+\[
+  \text{VMR} = 1 + \frac{\Var(\lambda_k)}{\bar\lambda}
+\]
+
+VMR $= 1$ iff all $\lambda_k$ equal (uniform model). \\
+Spatial correlation of GC content prevents $\Var(\lambda_k)$ from averaging out — hence VMR $\approx 14.7$ in our data.
+
+%--------------------------------------------------------------------
+\section*{Regression for $f(\text{gc})$}
+%--------------------------------------------------------------------
+
+\textbf{Linear:} $Y_k = \beta_0 + \beta_1\,\gc_k + \epsilon_k$,
+$\;\hat\beta_1 = \widehat{\text{Cov}}(\gc,Y)/\widehat{\Var}(\gc)$
+
+\textbf{B-spline (cubic, knots $t_1,\ldots,t_m$):}
+Fit $Y_k \sim \text{bs}(\gc_k,\,\text{knots},\,\text{degree}=3)$ via OLS.
+Ensures continuity of function and derivatives 1–2 at each knot. \\
+More knots $=$ more flexibility; degree controls smoothness.
+
+\textbf{Fit quality:}
+\[
+  R^2 = 1 - \frac{\text{RSS}}{\text{TSS}}, \quad
+  \text{RMSE} = \sqrt{\frac{1}{K}\sum_k r_k^2}
+\]
+
+\textbf{Heteroscedasticity check:}
+\[
+  \text{SD ratio} = \frac{\text{SD}(\text{residuals},\,\gc>\text{Q3})}{\text{SD}(\text{residuals},\,\gc<\text{Q1})}
+\]
+SD ratio $\approx 2.25$ in our data $\Rightarrow$ variance grows with coverage.
+
+%--------------------------------------------------------------------
+\section*{Poisson GLM \& Quasi-Poisson}
+%--------------------------------------------------------------------
+
+\textbf{Poisson GLM:} $\log\E[Y_k] = \beta_0 + \beta_1\,\gc_k$ \\
+Assumes $\Var(Y) = \E[Y]$. \\[2pt]
+\textbf{Quasi-Poisson:} same mean, but $\Var(Y) = \phi\,\E[Y]$, \;$\phi$ estimated. \\
+In our data: $\phi \approx 14$ after GC is modelled.
+
+\textbf{McFadden pseudo-$R^2$:}
+$\displaystyle\tilde R^2 = 1 - \frac{\log L(\hat{\text{model}})}{\log L(\text{null})}$
+
+%--------------------------------------------------------------------
+\section*{Copy Number Estimation}
+%--------------------------------------------------------------------
+
+\textbf{Model:}
+\[
+  Y_k \sim \text{Pois}(\lambda_k), \quad \lambda_k = a_k \cdot f(\gc_k) + \epsilon_k
+\]
+Identifiability: $\med_k\{a_k\}=1$, $\;\E_k[f(\gc_k)]=1$, $\;\E[\epsilon_k]=0$.
+
+\textbf{Plug-in estimator:}
+\[
+  \hat a_k = \frac{y_k}{\hat f(\gc_k)} \cdot \hat M, \quad
+  \hat M = \frac{1}{\med_k\!\left\{\dfrac{y_k}{\hat f(\gc_k)}\right\}}
+\]
+
+\textbf{Variance decomposition of $\hat a_k$:}
+\[
+  \Var(\hat a_k) \approx \frac{\lambda_k + \sigma^2}{f(\gc_k)^2}
+  = \underbrace{\frac{1}{f(\gc_k)}}_{\text{Poisson}} + \underbrace{\frac{\sigma^2}{f(\gc_k)^2}}_{\varepsilon\text{ noise}}
+\]
+In our data: Poisson $\approx 16\%$, $\varepsilon \approx 84\%$ of total variance.
+
+\textbf{Two-sample estimator:}
+\[
+  \hat a_k^{\text{2-sample}} = \frac{\hat a_k^{\text{tumor}}}{\hat a_k^{\text{healthy}}}
+\]
+Divides out shared GC bias and germline CNVs.
+
+\textbf{Noise models:}
+\begin{itemize}[leftmargin=*, itemsep=1pt, topsep=2pt]
+  \item Additive: $\lambda_k = a_k f + \epsilon$ (fixed-size offset)
+  \item Multiplicative: $\lambda_k = a_k f \cdot \eta$, $\;\eta\sim N(1,\gamma^2)$ \\ $\leftarrow$ more biologically plausible (error scales with signal)
+\end{itemize}
+
+%--------------------------------------------------------------------
+\section*{Hypothesis Testing \& Empirical Null}
+%--------------------------------------------------------------------
+
+\textbf{Statistic:} $S1_k = \log_2(\hat a_k^{\text{2-sample}})$ \\
+Under $H_0$ (no tumor-specific change): $S1 \approx 0$.
+
+\textbf{Negative control selection (Strategy B):}\\
+Keep bin $k$ if in its 11-bin window:
+$|\tilde{T}| \leq \log_2 1.10$ AND $\text{SD} \leq \log_2 1.15$.\\
+Filter on the \emph{ratio}, not the healthy alone: $H_0$ is ``no tumor-specific change'', so shared germline CNVs are correctly included.
+
+\textbf{Empirical two-sided p-value:}
+\[
+  p_k = \frac{\bigl|\{j \in \text{ctrl} : |S1_j| \geq |S1_k|\}\bigr|}{|\text{ctrl}|}
+\]
+Requires no distributional assumption; resolution floor $= 1/|\text{ctrl}|$.
+
+\textbf{Calibration check:} split control bins into interleaved blocks $\gg W$; compute p-values of held-out CN=1 bins; check P-P plot tracks the uniform diagonal. \\
+$\Rightarrow$ KS $D \approx 0.009$ (S1 well-calibrated).
+
+%--------------------------------------------------------------------
+\section*{Multiple Testing Correction}
+%--------------------------------------------------------------------
+
+\textbf{Bonferroni} (FWER control): $\alpha' = \alpha/m$. \\
+Probability of $\geq 1$ false positive $\leq \alpha$. \\
+Too strict for genome-wide scan ($m\sim10^5$).
+
+\textbf{Benjamini--Hochberg (FDR control):}\\
+Sort $p_{(1)} \leq \cdots \leq p_{(m)}$. Reject all $H_{(k)}$ with
+\[
+  k \leq k^* = \max\!\left\{k : p_{(k)} \leq \frac{k}{m}\alpha\right\}.
+\]
+Controls $\E\!\left[\frac{\text{false positives}}{\text{total significant}}\right] \leq \alpha$.\\
+Preferred for genome-wide tests: tolerates a known small fraction of false positives in exchange for power to detect many real events.
+
+%--------------------------------------------------------------------
+\section*{Bias--Variance Tradeoff / Bin Size}
+%--------------------------------------------------------------------
+
+Larger bins $\Rightarrow\;\downarrow$ per-bin Poisson noise, $\uparrow$ GC signal blurring.\\
+Statistical elbow: $\sim$5 kb (marginal $R^2$ gain $<5\%$ threshold). \\
+Biological constraint: genes 10--100 kb, CpG islands 0.5--2 kb. \\
+\textbf{Aggregative model:} fit at fine resolution, predict parent cells by summing sub-cell predictions — best of both (1 kb wins in lab 7).
+
+%--------------------------------------------------------------------
+\section*{Key Numbers}
+%--------------------------------------------------------------------
+
+\begin{tabular}{@{}ll@{}}
+$\lambda$ (50--60 Mb) & $\approx 0.036$ reads/base \\
+Binned VMR            & $\approx 14.7$ \\
+GC--coverage $r$      & $\approx 0.84$ \\
+Spline $R^2$ ceiling  & $\approx 0.75$ \\
+SD ratio              & $\approx 2.25$ \\
+Quasi-Poisson $\phi$  & $\approx 14$ \\
+CN MAE (healthy)      & $\approx 0.15$ \\
+Var split (Pois/$\varepsilon$) & 16\% / 84\% \\
+$r$ (tumor vs healthy)& $\approx 0.10$ \\
+FDR gains / losses    & 1600 / 1313 \\
+Focal deletion        & $\sim$28.5 Mb, ratio $\approx 0.54$ \\
+\end{tabular}
+
+\end{multicols}
+\end{document}
