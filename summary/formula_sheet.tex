@@ -102,9 +102,9 @@ Applied here:
 \]
 VMR $=1$ iff all $\lambda_k$ equal. Spatial correlation of GC prevents $\Var(\lambda_k)$ from averaging out under binning — rates in nearby bins are similar.
 
-\textbf{Robust estimators} (resistant to outliers):\\
-Center: \textbf{median}. Spread: \textbf{IQR}, \textbf{MAD} $= \med|x_i - \med(x)|$.\\
-Use instead of mean/SD when data are heavy-tailed or have outliers.
+\textbf{Robust estimators:} Center: median. Spread: IQR, MAD $= \med|x_i - \med(x)|$. Use instead of mean/SD when data are skewed or have outliers.
+
+\textbf{Benjamini \& Speed (2012) key findings:} GC bias is \textbf{unimodal} (both GC-rich and AT-rich fragments underrepresented; peaks at $\sim$50\% GC). Driven by \textbf{full-fragment} GC, not just the read $\Rightarrow$ PCR is the main cause. Full-fragment model: MAD 9.5 vs loess MAD 10.8 on 1 kb bins. GC curves \emph{differ between samples} — always fit per sample.
 
 %--------------------------------------------------------------------
 \section*{Linear Regression for $f(\gc)$ (Lec 4)}
@@ -155,44 +155,53 @@ Spearman $r$ is rank-based — robust to outliers, but misleading when there is 
 \textbf{Bin size tradeoff:} larger bins $\downarrow$ Poisson noise, $\uparrow$ GC signal blurring. Statistical elbow $\sim$5 kb. Biological constraint: genes 10--100 kb.
 
 %--------------------------------------------------------------------
-\section*{Copy Number Estimation (Labs 6--8)}
+\section*{Copy Number Estimation (Labs 6--8, Yuval's notes)}
 %--------------------------------------------------------------------
 
-\textbf{Model:}
+\textbf{Model:} $Y_k \sim \text{Pois}(\lambda_k)$,
 \[
-  Y_k \sim \text{Pois}(\lambda_k), \quad \lambda_k = a_k \cdot f(\gc_k) + \epsilon_k
+  \lambda_k = a_k \cdot f(\gc_k) \cdot \epsilon_k
 \]
-Identifiability constraints: $\med_k\{a_k\}=1$,\ $\E_k[f(\gc_k)]=1$,\ $\E[\epsilon_k]=0$.
+$a_k \in \{0, \tfrac{1}{2}, 1, \tfrac{3}{2}, 2,\ldots\}$ = copy number.
+$f(\gc_k)$ = expected coverage at copy number 1.
+$\epsilon_k$ = residual technical noise, $\E[\epsilon_k]=1$.
 
-\textbf{Plug-in estimator:}
-\[
-  \hat a_k = \frac{y_k}{\hat f(\gc_k)} \cdot \hat M, \quad
-  \hat M = \frac{1}{\med_k\!\left\{\dfrac{y_k}{\hat f(\gc_k)}\right\}}
-\]
-= divide out GC effect, renormalize so median $= 1$.
+Identifiability: $\med_k\{a_k\}=1$,\ $\E_k[f(\gc_k)]=1$.
 
-\textbf{Variance of $\hat a_k$:}
+\textbf{Single-sample plug-in estimator} $\hat a_k^{(1)}$:
 \[
-  \Var(\hat a_k) \approx \frac{\lambda_k + \sigma^2}{f(\gc_k)^2}
-  = \underbrace{\frac{1}{f(\gc_k)}}_{\text{Poisson}} + \underbrace{\frac{\sigma^2}{f(\gc_k)^2}}_{\varepsilon\ \text{noise}}
+  \hat a_k^{(1)} = \frac{Y_k}{\hat f(\gc_k)} \cdot \hat M, \quad \hat M = \frac{1}{\med_k\!\left\{\frac{Y_k}{\hat f(\gc_k)}\right\}}
 \]
-In our data: Poisson $\approx 16\%$, $\varepsilon \approx 84\%$.
+\textbf{Stabilized estimator} (reduces variance, increases bias for $a_k \neq 1$):
+\[
+  \hat a_k^{(1*)} = \frac{Y_k + c}{\hat f(\gc_k) + c}
+\]
+
+\textbf{Variance of $\hat a_k^{(1)}$:}
+\[
+  \Var(\hat a_k) \approx \underbrace{\frac{1}{f(\gc_k)}}_{\text{Poisson }\approx16\%} + \underbrace{\frac{\sigma^2}{f(\gc_k)^2}}_{\varepsilon\text{ noise }\approx84\%}
+\]
+
+\textbf{Two-sample model} (Yuval's note 2): decompose noise into shared $\gamma_k$ and sample-specific $\delta_k^T, \delta_k^N$:
+\[
+  Y_k^T = a_k \cdot f^T(\gc_k) \cdot \gamma_k \cdot \delta_k^T + \eta^T,\quad
+  Y_k^N = f^N(\gc_k) \cdot \gamma_k \cdot \delta_k^N + \eta^N
+\]
+\textbf{Two-sample estimator:}
+\[
+  \hat a_k^{(2)} = \frac{Y_k^T/\hat f^T(\gc_k) + c}{Y_k^N/\hat f^N(\gc_k) + c}
+  \;\approx\; a_k \cdot \frac{\delta_k^T}{\delta_k^N}
+\]
+Shared noise $\gamma_k$ cancels. Residual noise is ratio of sample-specific terms only — better than single-sample if $\gamma_k$ dominates.\\
+\textbf{Fit separate GC spline per sample.} Ratio also cancels germline CNVs.
 
 \textbf{Noise models:}
-\begin{itemize}[leftmargin=*, itemsep=0pt, topsep=1pt]
-  \item Additive: $\lambda_k = a_k f + \epsilon$ — offset independent of signal
-  \item Multiplicative: $\lambda_k = a_k f \cdot \eta$, $\eta\sim N(1,\gamma^2)$ — error scales with signal; more biologically plausible (PCR amplifies proportionally)
-\end{itemize}
+Additive: $\lambda_k = a_k f + \epsilon$ (offset independent of signal).
+Multiplicative: $\lambda_k = a_k f \cdot \eta$, $\eta\sim N(1,\gamma^2)$ — error scales with signal; PCR amplifies proportionally $\Rightarrow$ more plausible.
 
-\textbf{Two-sample estimator (Lec 8):}
-\[
-  \hat a_k^{\text{2-sample}} = \frac{\hat a_k^{\text{tumor}}}{\hat a_k^{\text{healthy}}}
-  = \frac{y_k^T / \hat f^T(\gc_k)}{y_k^H / \hat f^H(\gc_k)}
-\]
-Fit a \emph{separate} GC spline per sample. Ratio cancels shared GC bias and germline CNVs. \\
-\textbf{Key diagnostic plot}: corrected ratio vs.\ position — should be flat at 1 under $H_0$. If coloured by CNV call, the y-axis must be the \emph{corrected} ratio, not raw reads.
+\textbf{Key diagnostic}: plot corrected ratio vs position — flat at 1 under $H_0$. Y-axis must be corrected ratio, not raw reads.
 
-\textbf{Aggregative model (Lab 7):} fit spline at fine bins (1 kb), predict coarse cells (10 kb) by summing sub-cell predictions. Captures local GC structure while controlling noise.
+\textbf{Aggregative model (Lab 7):} fit at 1 kb, sum sub-cell predictions to predict 10 kb bins. Preserves local GC structure.
 
 %--------------------------------------------------------------------
 \section*{Hypothesis Testing \& Multiple Testing (Lab 9)}
@@ -214,20 +223,18 @@ Controls $\E[\text{FP}/\text{sig}]\leq\alpha$. Preferred: tolerates a small know
 \section*{Key Numbers}
 %--------------------------------------------------------------------
 
+{\small
 \begin{tabular}{@{}ll@{}}
-$\lambda$ (50--60 Mb)          & $\approx 0.036$/base \\
-Binned VMR                     & $\approx 14.7$ \\
-GC--coverage $r$               & $\approx 0.84$ \\
-Spline $R^2$ ceiling (5 kb)    & $\approx 0.75$ \\
-SD ratio (high/low GC)         & $\approx 2.25$ \\
-$R^2$ gain: G+C vs single base & $\approx 0.17$ \\
-Quasi-Poisson $\phi$ (after GC)& $\approx 14$ \\
-CN MAE from baseline           & $\approx 0.15$ \\
-Var split (Pois / $\varepsilon$)& 16\% / 84\% \\
-$r$ (tumor vs healthy, 2.5 kb) & $\approx 0.10$ \\
-Stat elbow (bin size)          & $\sim$5 kb \\
-Centromere gap                 & $\sim$120--130 Mb \\
+$\lambda$ (50--60 Mb) & $\approx 0.036$/base \\
+VMR (binned)          & $\approx 14.7$; \quad GC--cov $r \approx 0.84$ \\
+Spline $R^2$ ceiling  & $\approx 0.75$; \quad SD ratio $\approx 2.25$ \\
+$\phi$ quasi-Pois     & $\approx 14$; \quad $R^2$ gain G+C $\approx 0.17$ \\
+CN MAE                & $\approx 0.15$; \quad Var: 16\% Pois / 84\% $\varepsilon$ \\
+$r$ tumor/healthy     & $\approx 0.10$; \quad elbow $\sim$5 kb \\
+Centromere gap        & $\sim$120--130 Mb; GC peak $\sim$53--55.5 Mb \\
+Paper MAD             & fragment 9.5 vs loess 10.8 (1 kb bins) \\
 \end{tabular}
+}
 
 \end{multicols}
 \end{document}

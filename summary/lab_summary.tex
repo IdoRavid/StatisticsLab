@@ -463,6 +463,28 @@ Their relative shares tell us whether \textbf{more reads} (shrinks the Poisson t
 or a \textbf{better technical model} (shrinks the $\epsilon$ term) is the path to
 improvement.
 
+\subsection{The two-sample noise decomposition (Yuval's theory note)}
+
+Yuval's second copy-number note provides a richer two-sample model. The noise in a single
+sample is decomposed into a \textbf{shared component} $\gamma_k$ (same in both tumor and
+healthy, e.g.\ local mappability, chromatin structure) and \textbf{sample-specific} components
+$\delta_k^T$, $\delta_k^N$:
+\[
+  Y_k^T = a_k \cdot f^T(\text{gc}_k) \cdot \gamma_k \cdot \delta_k^T + \eta^T_{k},\qquad
+  Y_k^N = f^N(\text{gc}_k) \cdot \gamma_k \cdot \delta_k^N + \eta^N_{k} .
+\]
+The two-sample estimator
+\[
+  \hat a_k^{(2)} = \frac{Y_k^T / \hat f^T(\text{gc}_k) + c}{Y_k^N / \hat f^N(\text{gc}_k) + c}
+  \;\approx\; a_k \cdot \frac{\delta_k^T}{\delta_k^N}
+\]
+cancels the shared component $\gamma_k$ entirely --- what remains is only the ratio of the
+sample-specific noises $\delta_k^T/\delta_k^N$. This is the key advantage over single-sample
+correction: if the dominant technical variation is shared (mappability, GC curves of the same shape), the two-sample ratio is much cleaner than either sample alone.
+
+The stabilized single-sample estimator $\hat a_k^{(1*)} = (Y_k+c)/(\hat f + c)$ trades a small
+increase in bias (for bins where $a_k\neq 1$) for reduced variance at low-coverage bins.
+
 \subsection{Additive vs.\ multiplicative noise}
 
 Should the noise be \textbf{additive} ($\lambda_k = a_k f + \epsilon$, fixed-size
