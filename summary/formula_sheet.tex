@@ -14,7 +14,8 @@
 \usepackage{titlesec}
 \usepackage[T1]{fontenc}
 \usepackage{listings}
-\lstset{basicstyle=\ttfamily\footnotesize, columns=flexible, breaklines=true}
+\lstset{basicstyle=\ttfamily\scriptsize, columns=flexible, breaklines=true,
+        breakatwhitespace=false, frame=none, xleftmargin=0pt}
 
 \titleformat{\section}{\normalfont\large\bfseries}{}{0em}{}[\vspace{-4pt}\rule{\linewidth}{0.5pt}]
 \titlespacing{\section}{0pt}{4pt}{2pt}
@@ -38,11 +39,7 @@
 \section*{Sequence Basics (Lab 1)}
 %--------------------------------------------------------------------
 
-\textbf{Chargaff's rule:} double-stranded DNA has A$\approx$T and C$\approx$G.\\
-Consequence: proportion plots of A\&T track each other; so do C\&G.
-
-\textbf{GC content} of a bin of size $b$:
-$\text{gc}_k = (G_k + C_k)/b \in [0,1]$
+\textbf{Chargaff:} A$\approx$T, C$\approx$G. \quad \textbf{GC content:} $\gc_k = (G_k+C_k)/b \in[0,1]$.
 
 %--------------------------------------------------------------------
 \section*{Coverage \& the Poisson Model (Lec 2--3)}
@@ -67,8 +64,7 @@ $J$ = total number of fragments in the experiment.
 Adding (2) + Poisson approx ($J$ large, $1/I$ small):
 \[
   Y_i \sim \text{Poisson}(\lambda), \quad
-  \E[Y] = \Var[Y] = \lambda, \quad
-  \text{SD}[Y] = \sqrt{\lambda}
+  \E[Y] = \Var[Y] = \lambda
 \]
 \textbf{Additive property:} $X_1,\ldots,X_K \sim \text{Pois}(\lambda)$ independent
 $\Rightarrow X_1+\cdots+X_K \sim \text{Pois}(K\lambda)$. \\
@@ -104,10 +100,10 @@ VMR $=1$ iff all $\lambda_k$ equal. Spatial correlation of GC prevents $\Var(\la
 
 \textbf{B\&S (2012):} GC bias unimodal (peaks $\sim$50\%); driven by full-fragment GC (PCR cause); MAD 9.5 vs loess 10.8; fit per sample.
 
-\textbf{From histogram} (midpoints $m_j$, counts $n_j$, total $n$):
+\textbf{From histogram} (midpoints $m_j$, counts $n_j$, $n=\sum n_j$):
 \[
-  \hat{\E}[Y] = \sum_j m_j \cdot \frac{n_j}{n}, \qquad
-  \widehat{\Var}(Y) = \sum_j m_j^2 \cdot \frac{n_j}{n} - \hat{\E}[Y]^2
+  \hat{\E}[Y] = \tfrac{\sum m_j n_j}{n}, \quad
+  \widehat{\Var}(Y) = \tfrac{\sum m_j^2 n_j}{n} - \hat{\E}[Y]^2
 \]
 Variance decomp plug-in: $\hat{\E}[\lambda_k] = \bar{Y}$,\ $\widehat{\Var}(\lambda_k) = \widehat{\Var}(Y) - \bar{Y}$.
 
@@ -115,16 +111,8 @@ Variance decomp plug-in: $\hat{\E}[\lambda_k] = \bar{Y}$,\ $\widehat{\Var}(\lamb
 \section*{Linear Regression for $f(\gc)$ (Lec 4)}
 %--------------------------------------------------------------------
 
-\textbf{Model:} $Y_k = \beta_0 + \beta_1\,\gc_k + \epsilon_k$, $\E[\epsilon_k]=0$
-
-\textbf{OLS estimate:}
-$\hat\beta_1 = \widehat{\text{Cov}}(\gc, Y)\,/\,\widehat{\Var}(\gc)$
-
-\textbf{Residual plots}: residuals vs.\ $\gc$ and vs.\ fitted values should be flat. Fan shape $\Rightarrow$ heteroscedasticity. CIs from \texttt{lm} are \textbf{wrong} under misspecification.
-
-$R^2 = 1 - \text{RSS}/\text{TSS}$, \quad $\text{RMSE} = \sqrt{\tfrac{1}{K}\sum_k r_k^2}$.
-
-\textbf{Global polynomials}: sensitive to outliers — a few extreme points distort the entire fit.
+\textbf{OLS:} $\hat\beta_1 = \widehat{\text{Cov}}(\gc,Y)/\widehat{\Var}(\gc)$; $\quad R^2 = 1-\text{RSS}/\text{TSS}$.\\
+Residuals vs.\ $\gc$ should be flat; fan shape $\Rightarrow$ heteroscedasticity. CIs wrong under misspecification. Global polynomials sensitive to outliers.
 
 %--------------------------------------------------------------------
 \section*{Spline Regression (Lec 4)}
@@ -134,11 +122,11 @@ Key idea: divide the predictor into regions at \textbf{knots} $t_1,\ldots,t_m$; 
 
 \textbf{Progression}: piecewise constant $\to$ piecewise linear (discontinuous) $\to$ continuous linear spline $\to$ cubic spline (continuous 1st \& 2nd derivatives).
 
-\textbf{Cubic spline basis:}\ $\hat y = b_0 + b_1 x + b_2 x^2 + b_3 x^3 + \sum_j c_j(x-t_j)^3_+$, where $(u)_+=\max(u,0)$.
+\textbf{Cubic spline basis} ($(u)_+=\max(u,0)$):
+\[ \hat y = b_0 + b_1 x + b_2 x^2 + b_3 x^3 + \textstyle\sum_j c_j(x-t_j)^3_+ \]
+\textbf{B-spline} \texttt{bs(x,knots,degree=3)}: same fit, local support.
 
-\textbf{B-spline} \texttt{bs(x,knots,degree=3)}: locally supported basis, same fit. More knots = more flexibility.
-
-\textbf{Heteroscedasticity:} SD ratio $= \text{SD(resid, high-GC)}/\text{SD(resid, low-GC)} \gg 1$ $\Rightarrow$ variance grows with coverage.
+\textbf{Heteroscedasticity:} SD ratio $= \text{SD}_\text{hi}/\text{SD}_\text{lo} \gg 1$ $\Rightarrow$ variance grows with coverage.
 
 %--------------------------------------------------------------------
 \section*{Poisson GLM \& Quasi-Poisson (Lab 5)}
@@ -180,11 +168,11 @@ Identifiability: $\med_k\{a_k\}=1$,\ $\E_k[f(\gc_k)]=1$.
 
 \textbf{Var decomp:} $\Var(\hat a_k) \approx \frac{1}{f(\gc_k)} + \frac{\sigma^2}{f(\gc_k)^2}$ (16\% Poisson, 84\% $\varepsilon$ noise).
 
-\textbf{Two-sample model} (Yuval's note 2): decompose noise into shared $\gamma_k$ and sample-specific $\delta_k^T, \delta_k^N$:
-\[
-  Y_k^T = a_k \cdot f^T(\gc_k) \cdot \gamma_k \cdot \delta_k^T + \eta^T,\quad
-  Y_k^N = f^N(\gc_k) \cdot \gamma_k \cdot \delta_k^N + \eta^N
-\]
+\textbf{Two-sample model}: shared $\gamma_k$, sample-specific $\delta_k^T,\delta_k^N$:
+\begin{align*}
+  Y_k^T &= a_k \cdot f^T(\gc_k) \cdot \gamma_k \cdot \delta_k^T + \eta^T\\
+  Y_k^N &= f^N(\gc_k) \cdot \gamma_k \cdot \delta_k^N + \eta^N
+\end{align*}
 \textbf{Two-sample estimator:}
 \[
   \hat a_k^{(2)} = \frac{Y_k^T/\hat f^T(\gc_k) + c}{Y_k^N/\hat f^N(\gc_k) + c}
@@ -193,9 +181,7 @@ Identifiability: $\med_k\{a_k\}=1$,\ $\E_k[f(\gc_k)]=1$.
 Shared noise $\gamma_k$ cancels. Residual noise is ratio of sample-specific terms only — better than single-sample if $\gamma_k$ dominates.\\
 \textbf{Fit separate GC spline per sample.} Ratio also cancels germline CNVs.
 
-\textbf{Noise models:}
-Additive: $\lambda_k = a_k f + \epsilon$ (offset independent of signal).
-Multiplicative: $\lambda_k = a_k f \cdot \eta$, $\eta\sim N(1,\gamma^2)$ — error scales with signal; PCR amplifies proportionally $\Rightarrow$ more plausible.
+\textbf{Noise:} Additive $\lambda_k=a_kf+\epsilon$ vs.\ Multiplicative $\lambda_k=a_kf\cdot\eta$ — PCR $\Rightarrow$ multiplicative more plausible.
 
 \textbf{Poisson irreducible noise floor:}
 \[
@@ -227,22 +213,49 @@ Controls $\E[\text{FP}/\text{sig}]\leq\alpha$. Preferred: tolerates a small know
 \section*{R Code Reference}
 %--------------------------------------------------------------------
 
-{\small\setlength{\parskip}{1pt}
-\textbf{Piecewise discontinuous} (4 params, knot at 0.4):
-\lstinline|lm(Y ~ I(GC<0.4)+I(GC*(GC<0.4))+I(GC>=0.4)+I(GC*(GC>=0.4)))|\\
-X-row for GC$=0.3$: $(1,0.3,0,0)$; for GC$=0.5$: $(0,0,1,0.5)$.
+{\setlength{\parskip}{1pt}
+\textbf{Coverage counting (fast):}
+\begin{lstlisting}
+tabulate(positions)   # counts per base, O(n)
+\end{lstlisting}
 
-\textbf{Broken stick} (continuous, 3 params):
-\lstinline|lm(Y ~ GC + I(pmax(GC - t, 0)))| — hinge at knot $t$.
+\textbf{VMR \& correlation:}
+\begin{lstlisting}
+vmr <- var(bins) / mean(bins)
+cor(gc, cov, method="spearman")  # rank-based
+\end{lstlisting}
 
-\textbf{Cubic B-spline:}
-\lstinline|lm(reads ~ bs(gc, knots=quantile(gc,c(.25,.5,.75)), degree=3))|
+\textbf{Piecewise discontinuous} (4 params, X-row for GC$=0.3$: $(1,0.3,0,0)$):
+\begin{lstlisting}
+lm(Y ~ I(GC<0.4) + I(GC*(GC<0.4)) +
+       I(GC>=0.4) + I(GC*(GC>=0.4)))
+\end{lstlisting}
 
-\textbf{Histogram} \lstinline|h<-hist(dat)|\ $\to$ \lstinline|h$mids|, \lstinline|h$counts|:
-\[
-  \hat\mu = \tfrac{\sum m_j n_j}{n},\quad
-  \hat\sigma^2 = \tfrac{\sum m_j^2 n_j}{n} - \hat\mu^2
-\]
+\textbf{Broken stick} (continuous, 3 params, hinge at knot $t$):
+\begin{lstlisting}
+lm(Y ~ GC + I(pmax(GC - t, 0)))
+\end{lstlisting}
+
+\textbf{Cubic B-spline / GLM:}
+\begin{lstlisting}
+knots <- quantile(gc, c(.25,.5,.75))
+lm(reads ~ bs(gc, knots=knots, degree=3))
+glm(reads ~ bs(gc,...), family=quasipoisson())
+\end{lstlisting}
+
+\textbf{GC correction \& CN estimator:}
+\begin{lstlisting}
+fhat <- predict(fit, data.frame(gc=df$gc))
+raw  <- df$reads / fhat
+a_hat <- raw / median(raw)        # single-sample
+cn_2s <- a_hat_tumor / a_hat_norm # two-sample
+\end{lstlisting}
+
+\textbf{Multiple testing:}
+\begin{lstlisting}
+p.adjust(pvals, method="BH")       # FDR
+p.adjust(pvals, method="bonferroni")
+\end{lstlisting}
 }
 
 \end{multicols}
