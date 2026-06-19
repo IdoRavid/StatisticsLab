@@ -118,13 +118,15 @@ Residuals vs.\ $\gc$ should be flat; fan shape $\Rightarrow$ heteroscedasticity.
 \section*{Spline Regression (Lec 4)}
 %--------------------------------------------------------------------
 
-Key idea: divide the predictor into regions at \textbf{knots} $t_1,\ldots,t_m$; fit a polynomial in each piece; glue with smoothness constraints.
-
-\textbf{Progression}: piecewise constant $\to$ piecewise linear (discontinuous) $\to$ continuous linear spline $\to$ cubic spline (continuous 1st \& 2nd derivatives).
+\textbf{Progression}: piecewise constant $\to$ discontinuous linear $\to$ broken stick (continuous) $\to$ cubic spline (continuous 1st \& 2nd deriv.).
 
 \textbf{Cubic spline basis} ($(u)_+=\max(u,0)$):
 \[ \hat y = b_0 + b_1 x + b_2 x^2 + b_3 x^3 + \textstyle\sum_j c_j(x-t_j)^3_+ \]
 \textbf{B-spline} \texttt{bs(x,knots,degree=3)}: same fit, local support.
+
+\textbf{Broken stick} (degree-1, knot $t$): slope is $\beta_1$ for $x<t$, and $\beta_1+\beta_2$ for $x>t$. Per 0.01 increase: divide slope by 100.
+
+\textbf{Residual slope interpretation:} positive slope in resid vs $x$ for $x>t$ $\Rightarrow$ true $f(x)$ rises faster than $\hat f(x)$ there (model underestimates).
 
 \textbf{Heteroscedasticity:} SD ratio $= \text{SD}_\text{hi}/\text{SD}_\text{lo} \gg 1$ $\Rightarrow$ variance grows with coverage.
 
