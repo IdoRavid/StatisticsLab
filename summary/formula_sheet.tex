@@ -13,6 +13,8 @@
 \usepackage{parskip}
 \usepackage{titlesec}
 \usepackage[T1]{fontenc}
+\usepackage{listings}
+\lstset{basicstyle=\ttfamily\footnotesize, columns=flexible, breaklines=true}
 
 \titleformat{\section}{\normalfont\large\bfseries}{}{0em}{}[\vspace{-4pt}\rule{\linewidth}{0.5pt}]
 \titlespacing{\section}{0pt}{4pt}{2pt}
@@ -41,8 +43,6 @@ Consequence: proportion plots of A\&T track each other; so do C\&G.
 
 \textbf{GC content} of a bin of size $b$:
 $\text{gc}_k = (G_k + C_k)/b \in [0,1]$
-
-\textbf{Key graphs}: proportion vs.\ position (bin each base, plot $\text{count}/b$); running median as trend line; scatter plots between base pairs (A vs T, C vs G should be most correlated).
 
 %--------------------------------------------------------------------
 \section*{Coverage \& the Poisson Model (Lec 2--3)}
@@ -79,8 +79,6 @@ $\Rightarrow$ Bin of size $b$: $Y_k \sim \text{Pois}(\lambda_k)$,\ $\lambda_k = 
   \text{VMR} = \frac{\Var[Y]}{\E[Y]} = 1 \quad \text{under uniform Poisson}
 \]
 
-\textbf{Key graphs}: histogram of $Y_i$ vs fitted Poisson bars (log-scale y); coverage vs position with y-axis capped (mark outliers with different symbol); binned coverage full-chromosome plot.
-
 %--------------------------------------------------------------------
 \section*{Overdispersion \& Variance Decomposition (Lec 3)}
 %--------------------------------------------------------------------
@@ -104,7 +102,14 @@ VMR $=1$ iff all $\lambda_k$ equal. Spatial correlation of GC prevents $\Var(\la
 
 \textbf{Robust estimators:} Center: median. Spread: IQR, MAD $= \med|x_i - \med(x)|$. Use instead of mean/SD when data are skewed or have outliers.
 
-\textbf{Benjamini \& Speed (2012) key findings:} GC bias is \textbf{unimodal} (both GC-rich and AT-rich fragments underrepresented; peaks at $\sim$50\% GC). Driven by \textbf{full-fragment} GC, not just the read $\Rightarrow$ PCR is the main cause. Full-fragment model: MAD 9.5 vs loess MAD 10.8 on 1 kb bins. GC curves \emph{differ between samples} — always fit per sample.
+\textbf{B\&S (2012):} GC bias unimodal (peaks $\sim$50\%); driven by full-fragment GC (PCR cause); MAD 9.5 vs loess 10.8; fit per sample.
+
+\textbf{From histogram} (midpoints $m_j$, counts $n_j$, total $n$):
+\[
+  \hat{\E}[Y] = \sum_j m_j \cdot \frac{n_j}{n}, \qquad
+  \widehat{\Var}(Y) = \sum_j m_j^2 \cdot \frac{n_j}{n} - \hat{\E}[Y]^2
+\]
+Variance decomp plug-in: $\hat{\E}[\lambda_k] = \bar{Y}$,\ $\widehat{\Var}(\lambda_k) = \widehat{\Var}(Y) - \bar{Y}$.
 
 %--------------------------------------------------------------------
 \section*{Linear Regression for $f(\gc)$ (Lec 4)}
@@ -133,11 +138,7 @@ Key idea: divide the predictor into regions at \textbf{knots} $t_1,\ldots,t_m$; 
 
 \textbf{B-spline} \texttt{bs(x,knots,degree=3)}: locally supported basis, same fit. More knots = more flexibility.
 
-\textbf{Heteroscedasticity check:}
-\[
-  \text{SD ratio} = \frac{\text{SD}(\text{resid},\, \gc>\text{Q3})}{\text{SD}(\text{resid},\, \gc<\text{Q1})} \approx 2.25
-\]
-SD ratio $\gg 1$ $\Rightarrow$ variance grows with $\gc$/coverage.
+\textbf{Heteroscedasticity:} SD ratio $= \text{SD(resid, high-GC)}/\text{SD(resid, low-GC)} \gg 1$ $\Rightarrow$ variance grows with coverage.
 
 %--------------------------------------------------------------------
 \section*{Poisson GLM \& Quasi-Poisson (Lab 5)}
@@ -177,10 +178,7 @@ Identifiability: $\med_k\{a_k\}=1$,\ $\E_k[f(\gc_k)]=1$.
   \hat a_k^{(1*)} = \frac{Y_k + c}{\hat f(\gc_k) + c}
 \]
 
-\textbf{Variance of $\hat a_k^{(1)}$:}
-\[
-  \Var(\hat a_k) \approx \underbrace{\frac{1}{f(\gc_k)}}_{\text{Poisson }\approx16\%} + \underbrace{\frac{\sigma^2}{f(\gc_k)^2}}_{\varepsilon\text{ noise }\approx84\%}
-\]
+\textbf{Var decomp:} $\Var(\hat a_k) \approx \frac{1}{f(\gc_k)} + \frac{\sigma^2}{f(\gc_k)^2}$ (16\% Poisson, 84\% $\varepsilon$ noise).
 
 \textbf{Two-sample model} (Yuval's note 2): decompose noise into shared $\gamma_k$ and sample-specific $\delta_k^T, \delta_k^N$:
 \[
@@ -199,9 +197,15 @@ Shared noise $\gamma_k$ cancels. Residual noise is ratio of sample-specific term
 Additive: $\lambda_k = a_k f + \epsilon$ (offset independent of signal).
 Multiplicative: $\lambda_k = a_k f \cdot \eta$, $\eta\sim N(1,\gamma^2)$ — error scales with signal; PCR amplifies proportionally $\Rightarrow$ more plausible.
 
-\textbf{Key diagnostic}: plot corrected ratio vs position — flat at 1 under $H_0$. Y-axis must be corrected ratio, not raw reads.
+\textbf{Poisson irreducible noise floor:}
+\[
+  \E\!\left[(Y_k - f(\gc_k))^2\right] = \E\!\left[(Y_k - \lambda_k)^2\right] \geq \E[\lambda_k] = \bar\lambda
+\]
+Training MSE $< \bar\lambda$ $\Rightarrow$ overfitting (memorizing noise).
 
-\textbf{Aggregative model (Lab 7):} fit at 1 kb, sum sub-cell predictions to predict 10 kb bins. Preserves local GC structure.
+\textbf{Key diagnostic}: corrected ratio vs position — flat at 1 under $H_0$.
+
+\textbf{Aggregative model (Lab 7):} fit at 1 kb, aggregate predictions to 10 kb bins.
 
 %--------------------------------------------------------------------
 \section*{Hypothesis Testing \& Multiple Testing (Lab 9)}
@@ -220,20 +224,25 @@ Multiplicative: $\lambda_k = a_k f \cdot \eta$, $\eta\sim N(1,\gamma^2)$ — err
 Controls $\E[\text{FP}/\text{sig}]\leq\alpha$. Preferred: tolerates a small known FP fraction for much greater power.
 
 %--------------------------------------------------------------------
-\section*{Key Numbers}
+\section*{R Code Reference}
 %--------------------------------------------------------------------
 
-{\small
-\begin{tabular}{@{}ll@{}}
-$\lambda$ (50--60 Mb) & $\approx 0.036$/base \\
-VMR (binned)          & $\approx 14.7$; \quad GC--cov $r \approx 0.84$ \\
-Spline $R^2$ ceiling  & $\approx 0.75$; \quad SD ratio $\approx 2.25$ \\
-$\phi$ quasi-Pois     & $\approx 14$; \quad $R^2$ gain G+C $\approx 0.17$ \\
-CN MAE                & $\approx 0.15$; \quad Var: 16\% Pois / 84\% $\varepsilon$ \\
-$r$ tumor/healthy     & $\approx 0.10$; \quad elbow $\sim$5 kb \\
-Centromere gap        & $\sim$120--130 Mb; GC peak $\sim$53--55.5 Mb \\
-Paper MAD             & fragment 9.5 vs loess 10.8 (1 kb bins) \\
-\end{tabular}
+{\small\setlength{\parskip}{1pt}
+\textbf{Piecewise discontinuous} (4 params, knot at 0.4):
+\lstinline|lm(Y ~ I(GC<0.4)+I(GC*(GC<0.4))+I(GC>=0.4)+I(GC*(GC>=0.4)))|\\
+X-row for GC$=0.3$: $(1,0.3,0,0)$; for GC$=0.5$: $(0,0,1,0.5)$.
+
+\textbf{Broken stick} (continuous, 3 params):
+\lstinline|lm(Y ~ GC + I(pmax(GC - t, 0)))| — hinge at knot $t$.
+
+\textbf{Cubic B-spline:}
+\lstinline|lm(reads ~ bs(gc, knots=quantile(gc,c(.25,.5,.75)), degree=3))|
+
+\textbf{Histogram} \lstinline|h<-hist(dat)|\ $\to$ \lstinline|h$mids|, \lstinline|h$counts|:
+\[
+  \hat\mu = \tfrac{\sum m_j n_j}{n},\quad
+  \hat\sigma^2 = \tfrac{\sum m_j^2 n_j}{n} - \hat\mu^2
+\]
 }
 
 \end{multicols}
