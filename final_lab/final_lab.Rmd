@@ -1,0 +1,121 @@
+---
+title: "Detecting a Copy-Number Change at chr1:28.5 Mb Despite GC Bias"
+subtitle: "Statistics Lab 52568 — Final Presentation"
+author: "Group 12 — Shir Tsarfaty, Omer Sutovsky, Ido Ravid"
+date: "`r format(Sys.Date(), '%d/%m/%y')`"
+output:
+  beamer_presentation:
+    latex_engine: xelatex
+    theme: "metropolis"
+    slide_level: 2
+    fig_caption: true
+header-includes:
+  - \DefineVerbatimEnvironment{Highlighting}{Verbatim}{breaklines,commandchars=\\\{\}}
+editor_options:
+  markdown:
+    wrap: sentence
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE,
+                      fig.align = "center", dev = "png", dpi = 200,
+                      cache = TRUE)
+```
+
+```{r paths_and_data, include=FALSE}
+if (!require('data.table')) { install.packages('data.table'); library('data.table') }
+if (!require('splines'))    { install.packages('splines');    library('splines') }
+
+source("../utils.R")
+source("../lab5/lab5_utils.R")
+
+healthy_file <- "../lab2/data/TCGA-13-0723-10B_lib2_all_chr1.forward"
+tumor_file   <- "../lab7/data/TCGA-13-0723-01A_lib2_all_chr1.forward"
+chr1_file    <- "../lab1/data/chr1_str.rda"
+
+# Converged choices (see presentation_content_map.md)
+BIN <- 2500
+```
+
+```{r load_data, include=FALSE}
+healthy_reads <- fread(healthy_file, col.names = c("Chr", "Loc", "Length"))
+tumor_reads   <- fread(tumor_file,   col.names = c("Chr", "Loc", "Length"))
+load(chr1_file)
+```
+
+<!-- =====================================================================
+  PRESENTATION SCAFFOLD — one slide per "##", ~1-2 per stage.
+  Content intentionally left as TODO placeholders; fill after deciding:
+    (1) single-sample (b) vs two-sample (d) headline method
+    (2) which figures to regenerate (see Gaps in presentation_content_map.md)
+  Audit landmines (see AUDIT_findings.md):
+    - do NOT quote Lab 6 16/84 variance split (double-counted)
+    - present t-stat ranking WITH the pmin(y,5) capping caveat
+===================================================================== -->
+
+# Background
+
+## The consultant's request
+
+TODO — the request, the data received (`-10B` healthy / `-01A` tumor `.forward`),
+external data (reference chr1 for GC).
+
+## The uncorrected region (~28.5 Mb)
+
+TODO — single-panel method-(a) plot, 25–30 Mb. "The event is buried in noise."
+
+```{r bg_uncorrected_plot, eval=FALSE}
+# REGENERATE: single-panel uncorrected CN, 25-30 Mb (extract from lab8 qa-plot)
+```
+
+# A — Statistical Model
+
+## From fragment counts to copy number
+
+TODO — model equation $Y_k \sim \text{Pois}(\lambda_k),\ \lambda_k = a_k \cdot f(\text{gc}_k) \cdot \epsilon_k$,
+each term annotated; VMR $\approx 14.7$ as the motivation that a single $\lambda$ fails.
+
+# B — Modeling the GC Effect
+
+## GC vs. fragment count + spline fit
+
+TODO — `lab7.Rmd:q1-gc-plots` (reuse); cubic B-spline; $r \approx 0.84$;
+$R^2$ healthy 0.629 / tumor 0.484.
+
+```{r gc_spline, eval=FALSE}
+# REUSE or refit: fit_gc_spline() per sample on non-zero bins
+```
+
+## Why fit the spline separately per sample
+
+TODO — overlaid healthy/tumor splines (`lab7.Rmd:q1-compare-curves`).
+*(Can merge with previous slide.)*
+
+# C — The Estimator
+
+## Plug-in estimator and the two-sample ratio
+
+TODO — single-sample $\hat a_k = (Y_k/\hat f(\text{gc}_k))\cdot \hat M$;
+stabilized $(Y_k+c)/(\hat f+c)$, $c=1$; two-sample ratio (shared noise $\gamma_k$ cancels).
+
+# D — Success Measure
+
+## Quantifying separation of the event
+
+TODO — Welch t-test, event 28–29 Mb vs background 25–28 $\cup$ 29–30 Mb.
+**Caveat to address:** `pmin(y,5)` capping affects the ranking.
+
+# E — Corrected Region & Results
+
+## Corrected vs. uncorrected at 28.5 Mb
+
+TODO — single-region before/after overlay (regenerate from `lab8.Rmd:qa-overlay`, 25-30 Mb only).
+
+```{r corrected_overlay, eval=FALSE}
+# REGENERATE: single-region (25-30 Mb) overlay, methods (a) and (d) emphasized
+```
+
+## The numbers
+
+TODO — Welch t-stat table (re-run `lab8.Rmd:qb-metric` for exact values);
+headline: method (d) best, (b) second. Takeaway + caveat.
