@@ -1,0 +1,89 @@
+\documentclass{article}
+\usepackage{amsmath,amssymb}
+\usepackage[margin=2cm]{geometry}
+\usepackage{booktabs}
+\pagestyle{empty}
+\begin{document}
+
+% ── Stage A ──────────────────────────────────────────────────────────────────
+\noindent\textbf{Stage A — Statistical Model}
+
+\medskip
+\noindent\textit{Naive Model:}
+\[
+X_1,\ldots,X_J \overset{\mathrm{i.i.d.}}{\sim} \mathrm{Unif}\{1,\ldots,I\}
+\quad\Longrightarrow\quad
+Y_i \approx \mathrm{Pois}\!\left(\frac{J}{I}\right)
+\]
+
+\noindent\textit{New Model:}
+\[
+Y_k \sim \mathrm{Pois}(\lambda_k),
+\qquad
+\lambda_k = a_k\,f(\mathrm{gc}_k)\,\varepsilon_k
+\]
+
+\noindent\textit{Variance Decomposition:}
+\[
+\operatorname{Var}(Y_k)
+=
+\underbrace{\mathbb{E}\!\left[\operatorname{Var}(Y_k\mid\lambda_k)\right]}_{\mathbb{E}[\lambda_k]\ \text{(within-bin Poisson noise)}}
++
+\underbrace{\operatorname{Var}\!\left(\mathbb{E}[Y_k\mid\lambda_k]\right)}_{\operatorname{Var}(\lambda_k)\ \text{(between-bin heterogeneity)}}.
+\]
+
+\noindent\textit{Noise Decomposition:}
+\[
+Y_k^T = a_k \cdot f^T(\mathrm{gc}_k) \cdot \gamma_k \cdot \delta_k^T + \eta_k^T,
+\qquad
+Y_k^N = f^N(\mathrm{gc}_k) \cdot \gamma_k \cdot \delta_k^N + \eta_k^N
+\]
+$\gamma_k$ = shared noise; $\delta_k$ = sample-specific noise; $\eta_k$ = Poisson additive noise.
+
+
+
+\bigskip\hrule\bigskip
+
+% ── Stage B ──────────────────────────────────────────────────────────────────
+\noindent\textbf{Stage B — GC Effect Modeling}
+
+\medskip
+\noindent\textit{GC Bias Function (estimated by cubic B-spline):}
+\[
+\mathbb{E}[Y_k \mid \mathrm{gc}_k] = f(\mathrm{gc}_k)
+\]
+\[
+\hat{f}(\mathrm{gc}) = \hat{\boldsymbol{\beta}}^\top \mathbf{b}(\mathrm{gc}),
+\qquad
+\mathbf{b}(\mathrm{gc}) = \mathrm{bs}\!\left(\mathrm{gc},\;
+  \mathrm{knots} = Q_{0.25}, Q_{0.50}, Q_{0.75},\;
+  \mathrm{degree} = 3\right)
+\]
+
+\bigskip\hrule\bigskip
+
+% ── Stage C ──────────────────────────────────────────────────────────────────
+\noindent\textbf{Stage C — Estimators}
+
+\medskip
+\noindent\textit{Plug-in estimator:}
+\[
+\hat{a}_k = \frac{Y_k}{\hat{f}(\mathrm{gc}_k)}\cdot\hat{M},
+\qquad \hat{M} = \frac{1}{\mathrm{median}_k\!\left\{Y_k/\hat{f}(\mathrm{gc}_k)\right\}}
+\]
+
+\noindent\textit{Stabilized estimator ($c=1$):}
+\[
+\hat{a}_k = \frac{Y_k + c}{\hat{f}(\mathrm{gc}_k) + c}
+\]
+
+\noindent\textit{Two-sample ratio (headline method):}
+\[
+\hat{a}_k^{\mathrm{ratio}}
+= \frac{\displaystyle\frac{Y_k^T + c}{\hat{f}^{\,T}(\mathrm{gc}_k)}}{\displaystyle\frac{Y_k^N + c}{\hat{f}^{\,N}(\mathrm{gc}_k)}}
+\approx \frac{a_k \cdot \delta^T}{\delta^N}
+\]
+
+\noindent where shared technical noise $\gamma_k$ cancels in the ratio.
+
+\end{document}
