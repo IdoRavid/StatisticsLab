@@ -41,6 +41,10 @@ BIN <- 2500
 healthy_reads <- fread(healthy_file, col.names = c("Chr", "Loc", "Length"))
 tumor_reads   <- fread(tumor_file,   col.names = c("Chr", "Loc", "Length"))
 load(chr1_file)
+
+# Bin data using the BIN size defined earlier
+df_h <- bin_data(healthy_reads, chr1, 1, nchar(chr1), BIN)
+df_t <- bin_data(tumor_reads,   chr1, 1, nchar(chr1), BIN)
 ```
 
 <!-- =====================================================================
@@ -79,31 +83,52 @@ each term annotated; VMR $\approx 14.7$ as the motivation that a single $\lambda
 
 ## GC vs. fragment count + spline fit
 
-TODO — `lab7.Rmd:q1-gc-plots` (reuse); cubic B-spline; $r \approx 0.84$;
-$R^2$ healthy 0.629 / tumor 0.484.
-
-```{r gc_spline, eval=FALSE}
-# REUSE or refit: fit_gc_spline() per sample on non-zero bins
+```{r gc_spline_plots, out.width="48%", fig.show='hold', eval=TRUE}
+# Display the scatter plot with the cubic B-spline fit for both healthy and tumor samples side-by-side
+# We reuse the plots already generated in Lab 7 to ensure consistency and save render time
+knitr::include_graphics("gc_plots.png")
 ```
 
 ## Why fit the spline separately per sample
 
-TODO — overlaid healthy/tumor splines (`lab7.Rmd:q1-compare-curves`).
-*(Can merge with previous slide.)*
+```{r gc_compare_plots, out.width="48%", fig.show='hold', eval=TRUE}
+# Overlay the two spline curves to visually demonstrate the batch effect differences
+# This proves why fitting a separate spline per sample is strictly required
+knitr::include_graphics("compare.png")
+```
 
 # C — The Estimator
 
 ## Plug-in estimator and the two-sample ratio
 
-TODO — single-sample $\hat a_k = (Y_k/\hat f(\text{gc}_k))\cdot \hat M$;
-stabilized $(Y_k+c)/(\hat f+c)$, $c=1$; two-sample ratio (shared noise $\gamma_k$ cancels).
+**1. Single-Sample (Plug-in) Estimator:**
+To remove the GC bias, we divide the observed counts by the spline prediction:
+$$ \hat{a}_k = \frac{Y_k}{\hat{f}(\text{gc}_k)} \cdot \hat{M} $$
+
+**2. The Stabilizer ($c=1$):**
+To prevent division by zero in sparse regions, we add a constant stabilizer:
+$$ \hat{a}_k = \frac{Y_k + 1}{\hat{f}(\text{gc}_k) + 1} \cdot \hat{M} $$
+
+**3. The Two-Sample Ratio (Method d):**
+Dividing Tumor by Healthy cancels out shared systemic noise ($\gamma_k$):
+$$ \hat{a}_k^{(d)} = \frac{(Y_k^T + 1) / (\hat{f}_T(\text{gc}_k) + 1)}{(Y_k^H + 1) / (\hat{f}_H(\text{gc}_k) + 1)} \cdot \hat{M}_{\text{final}} $$
 
 # D — Success Measure
 
 ## Quantifying separation of the event
 
-TODO — Welch t-test, event 28–29 Mb vs background 25–28 $\cup$ 29–30 Mb.
-**Caveat to address:** `pmin(y,5)` capping affects the ranking.
+To objectively measure how well our method separates the true biological deletion from the surrounding noise, we apply a **Welch t-test**.
+
+**1. Test Regions:**
+* **Event (Signal):** $28 \text{ Mb} - 29 \text{ Mb}$
+* **Background (Noise):** $25 \text{ Mb} - 28 \text{ Mb} \cup 29 \text{ Mb} - 30 \text{ Mb}$
+
+**2. Test Statistic (Separation Score):**
+$$ t = \frac{\bar{X}_{\text{event}} - \bar{X}_{\text{background}}}{\sqrt{\frac{S_{\text{event}}^2}{N_{\text{event}}} + \frac{S_{\text{background}}^2}{N_{\text{background}}}}} $$
+*(A higher absolute $t$-value indicates a sharper separation between the tumor event and the background).*
+
+**3. Important Caveat (Outlier Capping):**
+Before computing the metric, we applied a hard cap of `pmin(y, 5)` to restrict extreme outliers. While this stabilizes the local variance, it acts as a non-linear transformation that slightly biases the absolute ranking of the methods.
 
 # E — Corrected Region & Results
 
